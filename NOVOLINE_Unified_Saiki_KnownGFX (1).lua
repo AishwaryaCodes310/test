@@ -2,6 +2,10 @@
 -- NOVOLINE Unified App | Saiki Rechat + YouTube Music Workspace + Known GFX
 -- Single NOVOLINE-themed shell with shared navigation and one visible workspace.
 -- SaikiMusic V9 AssetID player removed as requested.
+-- Entire startup is guarded so runtime failures are reported instead of silently
+-- leaving a half-created interface behind.
+local function __NOVOLINE_STARTUP()
+    warn("[NOVOLINE] Starting unified app...")
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
@@ -10,24 +14,46 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local function resolveParent()
-    local ok, hui = pcall(function()
-        local env = getfenv(0)
-        return type(env.gethui) == "function" and env.gethui() or nil
+-- Parent selection must test WRITING, not merely reading CoreGui. Some executors
+-- allow CoreGui:GetChildren() but reject parenting a ScreenGui to CoreGui.
+local function getGuiParent()
+    local candidates = {}
+    local okHui, hui = pcall(function()
+        if type(gethui) == "function" then return gethui() end
+        local env = getfenv and getfenv(0)
+        if env and type(env.gethui) == "function" then return env.gethui() end
+        return nil
     end)
-    if ok and typeof(hui) == "Instance" then return hui end
-    local okCore = pcall(function() return CoreGui:GetChildren() end)
-    if okCore then return CoreGui end
+    if okHui and typeof(hui) == "Instance" then table.insert(candidates, hui) end
+    table.insert(candidates, LocalPlayer:WaitForChild("PlayerGui"))
+    table.insert(candidates, CoreGui)
+    local seen = {}
+    for _, candidate in ipairs(candidates) do
+        if candidate and not seen[candidate] then
+            seen[candidate] = true
+            local probe = Instance.new("ScreenGui")
+            probe.Name = "NOVOLINE_PARENT_PROBE"
+            local ok = pcall(function() probe.Parent = candidate end)
+            if ok and probe.Parent == candidate then
+                probe:Destroy()
+                return candidate
+            end
+            pcall(function() probe:Destroy() end)
+        end
+    end
     return LocalPlayer:WaitForChild("PlayerGui")
 end
 
-local PARENT = resolveParent()
-for _, container in ipairs({PARENT, LocalPlayer:WaitForChild("PlayerGui"), CoreGui}) do
-    local old = container:FindFirstChild("NOVOLINE_SAIKI_KNOWN_UNIFIED")
-    if old then old:Destroy() end
+local PARENT = getGuiParent()
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+for _, container in ipairs({PARENT, playerGui, CoreGui}) do
+    pcall(function()
+        local old = container:FindFirstChild("NOVOLINE_SAIKI_KNOWN_UNIFIED")
+        if old then old:Destroy() end
+    end)
 end
 
--- NOVOLINE application shell: one window, one navigation system, one content surface.
+-- NOVOLINE application shell: one ScreenGui, one navigation system, one content surface.
 local HOST = {}
 HOST.Gui = Instance.new("ScreenGui")
 HOST.Gui.Name = "NOVOLINE_SAIKI_KNOWN_UNIFIED"
@@ -36,7 +62,11 @@ HOST.Gui.IgnoreGuiInset = true
 HOST.Gui.DisplayOrder = 90
 HOST.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pcall(function() HOST.Gui.ScreenInsets = Enum.ScreenInsets.None end)
-HOST.Gui.Parent = PARENT
+local parentOk, parentErr = pcall(function() HOST.Gui.Parent = PARENT end)
+if not parentOk or HOST.Gui.Parent ~= PARENT then
+    warn("[NOVOLINE] Preferred GUI parent failed; falling back to PlayerGui: " .. tostring(parentErr))
+    HOST.Gui.Parent = playerGui
+end
 
 local COLORS = {
     bg = Color3.fromRGB(8, 9, 12), panel = Color3.fromRGB(15, 16, 20),
@@ -232,7 +262,7 @@ setPage("Chat")
 
 
 --==================== ORIGINAL SAIKIRECHAT MODULE ====================
-do
+local saikiModuleOK, saikiModuleError = pcall(function()
 --[[
 	SAIKI RECHAT V2.8 (client-side, Luau / executor)
 	V2.3 adds: new DM homepage (Recent / In Server / Search), local DM history cache,
@@ -5988,7 +6018,8 @@ end)()
 	end)
 end)()
 
-end
+end)
+if not saikiModuleOK then warn("[NOVOLINE] Saiki Rechat module failed: " .. tostring(saikiModuleError)) end
 
 --==================== NOVOLINE MUSIC WORKSPACE ====================
 do
@@ -6096,7 +6127,7 @@ Instance.new("UICorner", empty).CornerRadius = UDim.new(0, 9)
 end
 
 --==================== ORIGINAL KNOWN GFX MODULE ====================
-do
+local gfxModuleOK, gfxModuleError = pcall(function()
 --// Known GFX v10 (client-side) //--
 -- Black rectangular panel with RGB accents and tabs: SKY / TIME / SOUND / STYLE / CONTACT.
 -- Only YOU see these changes.
@@ -7456,10 +7487,11 @@ do
 	end))
 end
 
-end
+end)
+if not gfxModuleOK then warn("[NOVOLINE] Known GFX module failed: " .. tostring(gfxModuleError)) end
 
 -- Unified host cleanup handle.
-shared.NOVOLINE_SAIKI_KNOWN = {
+local controller = {
     Toggle = function()
         visible = not visible
         content.Visible = visible
@@ -7473,4 +7505,16 @@ shared.NOVOLINE_SAIKI_KNOWN = {
     SetPage = setPage,
     Pages = pages,
 }
-print("[NOVOLINE] Unified app loaded (full-screen module-layer architecture).")
+pcall(function() shared.NOVOLINE_SAIKI_KNOWN = controller end)
+print("[NOVOLINE] Unified app shell initialized; Saiki=" .. tostring(saikiModuleOK) .. ", KnownGFX=" .. tostring(gfxModuleOK))
+
+end
+
+local __novolineOK, __novolineError = xpcall(__NOVOLINE_STARTUP, function(err)
+    local trace = tostring(err)
+    pcall(function() trace = debug.traceback(trace, 2) end)
+    return trace
+end)
+if not __novolineOK then
+    warn("[NOVOLINE] STARTUP FAILED: " .. tostring(__novolineError))
+end
