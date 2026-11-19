@@ -82,6 +82,7 @@ shell.Size = UDim2.new(1, -34, 1, -86)
 shell.BackgroundColor3 = COLORS.bg
 shell.BorderSizePixel = 0
 shell.ClipsDescendants = true
+shell.Visible = false -- legacy backdrop must never cover the unified workspace
 shell.Parent = HOST.Gui
 Instance.new("UICorner", shell).CornerRadius = UDim.new(0, 18)
 local shellStroke = Instance.new("UIStroke", shell)
@@ -159,7 +160,6 @@ content.BorderSizePixel = 0
 content.ClipsDescendants = false
 content.ZIndex = 1
 content.Parent = HOST.Gui
-shell.Visible = false -- legacy frame retained only as a safe style reference
 
 local function makeSlot(name)
     local slot = Instance.new("Frame")
@@ -250,6 +250,7 @@ Toggle.Activated:Connect(function()
     content.Visible = visible
     header.Visible = visible
     nav.Visible = visible
+    shell.Visible = false -- never expose the unused legacy backdrop
 end)
 
 local function fitShell()
@@ -6973,8 +6974,7 @@ stopRow.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------------------- REALISTIC tab (high-end graphics card look)
-local vigGui = HOST.GFXSlot
-pcall(function() vigGui.ScreenInsets = Enum.ScreenInsets.None end)
+local vigGui = HOST.GFXSlot -- Frame workspace; ScreenInsets belongs to ScreenGui, not this slot
 local function vigFrame(size, pos, rot)
 	local f = new("Frame", { Size = size, Position = pos, BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, vigGui)
 	table.insert(vigGrads, new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new(1, 1) }, f))
@@ -7372,7 +7372,7 @@ pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end)
 main.Visible = false
 circle.Visible = false
 do
-	local loader = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 4, 1, 4), BackgroundColor3 = Color3.fromRGB(4, 3, 10), BorderSizePixel = 0, ZIndex = 100, ClipsDescendants = true }, HOST.GFXSlot)
+	local loader = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 4, 1, 4), BackgroundColor3 = Color3.fromRGB(4, 3, 10), BorderSizePixel = 0, ZIndex = 100, Active = false, Selectable = false, ClipsDescendants = true }, HOST.GFXSlot)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(26, 10, 44), Color3.fromRGB(3, 3, 9)) }, loader)
 	if FRAME_ID ~= "" then
 		new("ImageLabel", {
