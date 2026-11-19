@@ -64,7 +64,10 @@ header.Name = "Header"
 header.Size = UDim2.new(1, 0, 0, 58)
 header.BackgroundColor3 = COLORS.panel
 header.BorderSizePixel = 0
-header.Parent = shell
+header.Parent = HOST.Gui
+header.Position = UDim2.fromOffset(0, 0)
+header.Size = UDim2.new(1, 0, 0, 44)
+header.ZIndex = 200
 local headerLine = Instance.new("Frame")
 headerLine.Size = UDim2.new(1, 0, 0, 1)
 headerLine.Position = UDim2.new(0, 0, 1, -1)
@@ -74,7 +77,7 @@ headerLine.Parent = header
 local brand = Instance.new("TextLabel")
 brand.BackgroundTransparency = 1
 brand.Position = UDim2.fromOffset(22, 0)
-brand.Size = UDim2.fromOffset(190, 58)
+brand.Size = UDim2.fromOffset(190, 44)
 brand.Font = Enum.Font.GothamBold
 brand.Text = "▲  NOVOLINE"
 brand.TextSize = 15
@@ -82,7 +85,7 @@ brand.TextColor3 = COLORS.text
 brand.TextXAlignment = Enum.TextXAlignment.Left
 brand.Parent = header
 local brandAccent = Instance.new("Frame")
-brandAccent.Position = UDim2.fromOffset(22, 43)
+brandAccent.Position = UDim2.fromOffset(22, 40)
 brandAccent.Size = UDim2.fromOffset(25, 2)
 brandAccent.BackgroundColor3 = COLORS.red
 brandAccent.BorderSizePixel = 0
@@ -106,32 +109,27 @@ nav.Position = UDim2.fromOffset(0, 58)
 nav.Size = UDim2.new(0, 176, 1, -58)
 nav.BackgroundColor3 = COLORS.panel
 nav.BorderSizePixel = 0
-nav.Parent = shell
-local navLine = Instance.new("Frame")
-navLine.Position = UDim2.new(1, -1, 0, 0)
-navLine.Size = UDim2.new(0, 1, 1, 0)
-navLine.BackgroundColor3 = COLORS.line
-navLine.BorderSizePixel = 0
-navLine.Parent = nav
-local navTitle = Instance.new("TextLabel")
-navTitle.BackgroundTransparency = 1
-navTitle.Position = UDim2.fromOffset(18, 20)
-navTitle.Size = UDim2.new(1, -30, 0, 18)
-navTitle.Font = Enum.Font.GothamBold
-navTitle.Text = "WORKSPACE"
-navTitle.TextSize = 9
-navTitle.TextColor3 = COLORS.muted
-navTitle.TextXAlignment = Enum.TextXAlignment.Left
-navTitle.Parent = nav
-
+nav.Parent = HOST.Gui
+nav.AnchorPoint = Vector2.new(0.5, 1)
+nav.Position = UDim2.new(0.5, 0, 1, -12)
+nav.Size = UDim2.fromOffset(360, 54)
+nav.ZIndex = 300
+Instance.new("UICorner", nav).CornerRadius = UDim.new(0, 14)
+local navStroke = Instance.new("UIStroke", nav)
+navStroke.Color = COLORS.line
+navStroke.Transparency = 0.12
+-- Feature layers occupy the full screen. This avoids clipping or offsetting the
+-- original Saiki / Known GFX windows inside a second window-sized container.
 local content = Instance.new("Frame")
 content.Name = "Workspace"
-content.Position = UDim2.fromOffset(176, 58)
-content.Size = UDim2.new(1, -176, 1, -58)
-content.BackgroundColor3 = COLORS.bg
+content.Position = UDim2.fromScale(0, 0)
+content.Size = UDim2.fromScale(1, 1)
+content.BackgroundTransparency = 1
 content.BorderSizePixel = 0
-content.ClipsDescendants = true
-content.Parent = shell
+content.ClipsDescendants = false
+content.ZIndex = 1
+content.Parent = HOST.Gui
+shell.Visible = false -- legacy frame retained only as a safe style reference
 
 local function makeSlot(name)
     local slot = Instance.new("Frame")
@@ -172,22 +170,22 @@ end
 for i, page in ipairs(pages) do
     local button = Instance.new("TextButton")
     button.Name = page.key .. "Navigation"
-    button.Position = UDim2.fromOffset(10, 52 + (i - 1) * 46)
-    button.Size = UDim2.new(1, -20, 0, 38)
+    button.Position = UDim2.new((i - 1) / 3, 5, 0, 7)
+    button.Size = UDim2.new(1 / 3, -10, 1, -14)
     button.BackgroundColor3 = COLORS.panel
     button.BorderSizePixel = 0
     button.AutoButtonColor = false
     button.Font = Enum.Font.GothamBold
-    button.Text = "   " .. page.icon .. "     " .. page.label
-    button.TextSize = 11
+    button.Text = page.icon .. "  " .. page.label
+    button.TextSize = 10
     button.TextColor3 = COLORS.muted
-    button.TextXAlignment = Enum.TextXAlignment.Left
+    button.TextXAlignment = Enum.TextXAlignment.Center
     button.Parent = nav
     Instance.new("UICorner", button).CornerRadius = UDim.new(0, 9)
     local accent = Instance.new("Frame")
     accent.Name = "ActiveAccent"
-    accent.Position = UDim2.fromOffset(0, 7)
-    accent.Size = UDim2.fromOffset(3, 24)
+    accent.Position = UDim2.new(0, 8, 1, -3)
+    accent.Size = UDim2.new(1, -16, 0, 2)
     accent.BackgroundColor3 = COLORS.red
     accent.BorderSizePixel = 0
     accent.Visible = false
@@ -219,14 +217,13 @@ toggleStroke.Transparency = 0.12
 local visible = true
 Toggle.Activated:Connect(function()
     visible = not visible
-    shell.Visible = visible
+    content.Visible = visible
+    header.Visible = visible
+    nav.Visible = visible
 end)
 
 local function fitShell()
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    local vp = cam.ViewportSize
-    shell.Size = UDim2.new(1, -math.min(34, vp.X * 0.04), 1, -math.min(86, vp.Y * 0.12))
+    -- Full-screen layers naturally follow the viewport; no nested shell scaling.
 end
 if workspace.CurrentCamera then
     workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitShell)
@@ -6945,7 +6942,7 @@ stopRow.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------------------- REALISTIC tab (high-end graphics card look)
-local vigGui = HOST.Gui
+local vigGui = HOST.GFXSlot
 pcall(function() vigGui.ScreenInsets = Enum.ScreenInsets.None end)
 local function vigFrame(size, pos, rot)
 	local f = new("Frame", { Size = size, Position = pos, BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, vigGui)
@@ -7465,7 +7462,9 @@ end
 shared.NOVOLINE_SAIKI_KNOWN = {
     Toggle = function()
         visible = not visible
-        shell.Visible = visible
+        content.Visible = visible
+        header.Visible = visible
+        nav.Visible = visible
     end,
     Destroy = function()
         pcall(function() HOST.Gui:Destroy() end)
@@ -7474,4 +7473,4 @@ shared.NOVOLINE_SAIKI_KNOWN = {
     SetPage = setPage,
     Pages = pages,
 }
-print("[NOVOLINE] Unified app loaded: Saiki Rechat, YouTube Music workspace, and Known GFX.")
+print("[NOVOLINE] Unified app loaded (full-screen module-layer architecture).")
