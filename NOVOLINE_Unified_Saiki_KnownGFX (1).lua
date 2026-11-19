@@ -27,16 +27,6 @@ for _, container in ipairs({PARENT, LocalPlayer:WaitForChild("PlayerGui"), CoreG
     if old then old:Destroy() end
 end
 
-local HOST = {}
-HOST.Gui = Instance.new("ScreenGui")
-HOST.Gui.Name = "NOVOLINE_SAIKI_KNOWN_UNIFIED"
-HOST.Gui.ResetOnSpawn = false
-HOST.Gui.IgnoreGuiInset = true
-HOST.Gui.DisplayOrder = 90
-HOST.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-pcall(function() HOST.Gui.ScreenInsets = Enum.ScreenInsets.None end)
-HOST.Gui.Parent = PARENT
-
 -- NOVOLINE application shell: one window, one navigation system, one content surface.
 local HOST = {}
 HOST.Gui = Instance.new("ScreenGui")
