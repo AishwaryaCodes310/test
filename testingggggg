@@ -5846,7 +5846,7 @@ end)
     local folder = "SaikiChatHubCache"
     local addonFile = folder .. "/saiki_qol_" .. tostring(LP.UserId) .. ".json"
     local settingsFile = folder .. "/settings_" .. tostring(LP.UserId) .. ".json"
-    local state = { paletteKey = Enum.KeyCode.RightShift, hudKey = Enum.KeyCode.RightAlt, hud = false, profiles = {} }
+    local state = { paletteKey = Enum.KeyCode.RightShift, hudKey = Enum.KeyCode.RightAlt, hud = false, profiles = {}, waypoints = {} }
     pcall(function()
         if isfolder and not isfolder(folder) and makefolder then makefolder(folder) end
         if isfile and readfile and isfile(addonFile) then
@@ -5856,6 +5856,7 @@ end)
                 if type(d.hudKey) == "string" and Enum.KeyCode[d.hudKey] then state.hudKey = Enum.KeyCode[d.hudKey] end
                 if type(d.hud) == "boolean" then state.hud = d.hud end
                 if type(d.profiles) == "table" then state.profiles = d.profiles end
+                if type(d.waypoints) == "table" then state.waypoints = d.waypoints end
             end
         end
     end)
@@ -5863,7 +5864,7 @@ end)
         pcall(function()
             if writefile then
                 if isfolder and not isfolder(folder) and makefolder then makefolder(folder) end
-                writefile(addonFile, HttpService:JSONEncode({ paletteKey = state.paletteKey.Name, hudKey = state.hudKey.Name, hud = state.hud, profiles = state.profiles }))
+                writefile(addonFile, HttpService:JSONEncode({ paletteKey = state.paletteKey.Name, hudKey = state.hudKey.Name, hud = state.hud, profiles = state.profiles, waypoints = state.waypoints }))
             end
         end)
     end
@@ -5905,37 +5906,48 @@ end)
         BackgroundColor3 = red, Text = "×", Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = white, ZIndex = 303 }, header)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, close)
 
-    local search = make("TextBox", { Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -24, 0, 42),
-        BackgroundColor3 = card, PlaceholderText = "Search commands and tools…", Text = "", ClearTextOnFocus = false,
-        Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
-    make("UICorner", { CornerRadius = UDim.new(0, 10) }, search)
+    -- This is the actual NovoLine-style command entry: type a command, then tap RUN.
+    -- It is deliberately always visible in the mobile panel; the search field below is separate.
+    local commandInput = make("TextBox", { Name = "CommandInput", Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -100, 0, 42),
+        BackgroundColor3 = card, PlaceholderText = "Type command…  e.g. help / fps / spectate name", Text = "", ClearTextOnFocus = false,
+        Font = Enum.Font.Code, TextSize = 13, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 10) }, commandInput)
+    make("UIPadding", { PaddingLeft = UDim.new(0, 11), PaddingRight = UDim.new(0, 7) }, commandInput)
+    local runCommand = make("TextButton", { Name = "RunCommand", Position = UDim2.new(1, -80, 0, 54), Size = UDim2.fromOffset(68, 42),
+        BackgroundColor3 = red, Text = "RUN", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = white, ZIndex = 303 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 10) }, runCommand)
+
+    local search = make("TextBox", { Position = UDim2.fromOffset(12, 104), Size = UDim2.new(1, -24, 0, 36),
+        BackgroundColor3 = card, PlaceholderText = "Search the command list…", Text = "", ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, search)
     make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8) }, search)
 
-    local target = make("TextBox", { Position = UDim2.fromOffset(12, 104), Size = UDim2.new(1, -24, 0, 38),
-        BackgroundColor3 = card, PlaceholderText = "Optional player name (for player tools)", Text = "", ClearTextOnFocus = false,
+    local target = make("TextBox", { Position = UDim2.fromOffset(12, 148), Size = UDim2.new(1, -24, 0, 34),
+        BackgroundColor3 = card, PlaceholderText = "Player target (optional for player commands)", Text = "", ClearTextOnFocus = false,
         Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, target)
     make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8) }, target)
 
-    local rows = make("ScrollingFrame", { Position = UDim2.fromOffset(12, 150), Size = UDim2.new(1, -24, 1, -254),
+    local rows = make("ScrollingFrame", { Position = UDim2.fromOffset(12, 190), Size = UDim2.new(1, -24, 1, -276),
         BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = isTouch and 2 or 3,
         CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 301 }, panel)
     local layout = make("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
-    local footer = make("TextLabel", { Position = UDim2.new(0, 14, 1, -96), Size = UDim2.new(1, -28, 0, 28),
-        BackgroundTransparency = 1, Text = "Tap a command. Swipe the list to see more.", Font = Enum.Font.Gotham,
+    local footer = make("TextLabel", { Position = UDim2.new(0, 14, 1, -82), Size = UDim2.new(1, -28, 0, 22),
+        BackgroundTransparency = 1, Text = "Type help for commands, or tap an item below.", Font = Enum.Font.Gotham,
         TextSize = 10, TextColor3 = muted, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 302 }, panel)
 
-    local profileBar = make("Frame", { Position = UDim2.new(0, 12, 1, -62), Size = UDim2.new(1, -24, 0, 48),
+    local profileBar = make("Frame", { Position = UDim2.new(0, 12, 1, -56), Size = UDim2.new(1, -24, 0, 42),
         BackgroundTransparency = 1, ZIndex = 302 }, panel)
-    local profileName = make("TextBox", { Position = UDim2.fromOffset(0, 4), Size = UDim2.new(0.48, -4, 0, 38),
+    local profileName = make("TextBox", { Position = UDim2.fromOffset(0, 3), Size = UDim2.new(0.48, -4, 0, 36),
         BackgroundColor3 = card, PlaceholderText = "Profile name", Text = "", ClearTextOnFocus = false,
         Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 303 }, profileBar)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, profileName)
     make("UIPadding", { PaddingLeft = UDim.new(0, 9) }, profileName)
-    local saveProfile = make("TextButton", { Position = UDim2.new(0.50, 0, 0, 4), Size = UDim2.new(0.25, -3, 0, 38),
+    local saveProfile = make("TextButton", { Position = UDim2.new(0.50, 0, 0, 3), Size = UDim2.new(0.25, -3, 0, 36),
         BackgroundColor3 = red, Text = "SAVE", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = white, ZIndex = 303 }, profileBar)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, saveProfile)
-    local profilesButton = make("TextButton", { Position = UDim2.new(0.75, 3, 0, 4), Size = UDim2.new(0.25, -3, 0, 38),
+    local profilesButton = make("TextButton", { Position = UDim2.new(0.75, 3, 0, 3), Size = UDim2.new(0.25, -3, 0, 36),
         BackgroundColor3 = card, Text = "PROFILES", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = white, ZIndex = 303 }, profileBar)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, profilesButton)
 
@@ -6031,6 +6043,264 @@ end)
     addCommand("FOV: Narrow (55)", "Set your local camera field of view to 55", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 55; setFooter("Camera FOV set to 55.") end end, "camera zoom fov narrow", "Camera")
 
     local rebuild
+    -- Extra mobile-friendly utility state. All waypoint operations are local and non-teleporting.
+    local notificationsMuted = false
+    local originalNotify = T and T.notify or nil
+    local lowGraphics = false
+    local graphicsSnapshot = nil
+    local function setNotifications(enabled)
+        notificationsMuted = not enabled
+        if T then T.notify = enabled and originalNotify or nil end
+        setFooter(enabled and "Saiki notifications enabled." or "Saiki notifications muted; chat and DMs still work.")
+    end
+    local function setLowGraphics(enabled)
+        if enabled == lowGraphics then setFooter(enabled and "Low graphics is already on." or "Low graphics is already off."); return end
+        lowGraphics = enabled
+        if enabled then
+            graphicsSnapshot = { shadows = game:GetService("Lighting").GlobalShadows, effects = {} }
+            pcall(function() game:GetService("Lighting").GlobalShadows = false end)
+            local classes = { ParticleEmitter = true, Trail = true, Beam = true, Fire = true, Smoke = true, Sparkles = true }
+            pcall(function()
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if classes[obj.ClassName] and obj.Enabled ~= nil then
+                        graphicsSnapshot.effects[obj] = obj.Enabled
+                        obj.Enabled = false
+                    end
+                end
+            end)
+            setFooter("Low graphics enabled locally. Use lowgfx off to restore captured effects.")
+        else
+            if graphicsSnapshot then
+                pcall(function() game:GetService("Lighting").GlobalShadows = graphicsSnapshot.shadows end)
+                for obj, wasEnabled in pairs(graphicsSnapshot.effects or {}) do
+                    if obj and obj.Parent then pcall(function() obj.Enabled = wasEnabled end) end
+                end
+            end
+            graphicsSnapshot = nil
+            setFooter("Captured lighting and visual effects restored.")
+        end
+    end
+    local function waypointCommand(action, name)
+        action = (action or ""):lower()
+        name = (name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if action == "add" then
+            local root = getRoot(); if not root then setFooter("Your character is not ready."); return end
+            if name == "" then name = "Waypoint " .. tostring(os.time()) end
+            local pos = root.Position
+            state.waypoints[name] = { x = pos.X, y = pos.Y, z = pos.Z }
+            persist(); setFooter("Saved waypoint '" .. name .. "'. Use waypoint copy " .. name .. " to copy its coordinates.")
+        elseif action == "list" then
+            local names = {}; for waypointName in pairs(state.waypoints) do names[#names + 1] = waypointName end
+            table.sort(names); setFooter(#names == 0 and "No saved waypoints." or ("Waypoints: " .. table.concat(names, ", ")))
+        elseif action == "copy" then
+            local point = state.waypoints[name]
+            if not point then setFooter("Waypoint not found. Use waypoint list."); return end
+            clipboard(string.format("%.2f, %.2f, %.2f", point.x, point.y, point.z))
+        elseif action == "delete" then
+            if state.waypoints[name] then state.waypoints[name] = nil; persist(); setFooter("Deleted waypoint '" .. name .. "'.")
+            else setFooter("Waypoint not found.") end
+        else
+            setFooter("Waypoint commands: waypoint add [name], waypoint list, waypoint copy [name], waypoint delete [name].")
+        end
+    end
+
+    local freecam = { active = false, flags = {} }
+    local function stopFreecam()
+        if not freecam.active then setFooter("Freecam is not active."); return end
+        freecam.active = false
+        if freecam.connection then pcall(function() freecam.connection:Disconnect() end); freecam.connection = nil end
+        if freecam.controls then pcall(function() freecam.controls:Destroy() end); freecam.controls = nil end
+        local cam = workspace.CurrentCamera
+        if cam then
+            pcall(function() cam.CameraType = freecam.oldType or Enum.CameraType.Custom end)
+            pcall(function() cam.CameraSubject = freecam.oldSubject end)
+            if freecam.oldCFrame then pcall(function() cam.CFrame = freecam.oldCFrame end) end
+        end
+        table.clear(freecam.flags)
+        setFooter("Freecam stopped; camera restored.")
+    end
+    local function startFreecam()
+        if freecam.active then setFooter("Freecam is already active. Use freecam off to exit."); return end
+        local cam = workspace.CurrentCamera
+        if not cam then setFooter("Camera is not available."); return end
+        freecam.oldType, freecam.oldSubject, freecam.oldCFrame = cam.CameraType, cam.CameraSubject, cam.CFrame
+        freecam.active = true
+        cam.CameraType = Enum.CameraType.Scriptable
+        local controls = make("Frame", { Name = "SaikiMobileFreecamControls", AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 12, 1, -18), Size = UDim2.fromOffset(226, 168), BackgroundColor3 = bg,
+            BackgroundTransparency = 0.06, ZIndex = 350 }, HOST.Gui)
+        freecam.controls = controls
+        make("UICorner", { CornerRadius = UDim.new(0, 12) }, controls)
+        make("UIStroke", { Color = red, Transparency = 0.45 }, controls)
+        local function control(label, flag, x, y, action)
+            local b = make("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(68, 30),
+                BackgroundColor3 = card, Text = label, Font = Enum.Font.GothamBold, TextSize = 10,
+                TextColor3 = white, ZIndex = 351 }, controls)
+            make("UICorner", { CornerRadius = UDim.new(0, 8) }, b)
+            b.Activated:Connect(function()
+                if action == "stop" then
+                    for k in pairs(freecam.flags) do freecam.flags[k] = false end
+                    for _, child in ipairs(controls:GetChildren()) do
+                        if child:IsA("TextButton") and child:GetAttribute("MoveFlag") then
+                            child.BackgroundColor3 = card
+                            child.Text = child:GetAttribute("BaseText")
+                        end
+                    end
+                elseif action == "exit" then stopFreecam()
+                else
+                    freecam.flags[flag] = not freecam.flags[flag]
+                    b.BackgroundColor3 = freecam.flags[flag] and red or card
+                    b.Text = freecam.flags[flag] and (label .. " ✓") or label
+                end
+            end)
+            if flag then b:SetAttribute("MoveFlag", true); b:SetAttribute("BaseText", label) end
+        end
+        control("TURN ↶", "yawLeft", 7, 7)
+        control("FWD", "forward", 79, 7)
+        control("TURN ↷", "yawRight", 151, 7)
+        control("LEFT", "left", 7, 43)
+        control("STOP", nil, 79, 43, "stop")
+        control("RIGHT", "right", 151, 43)
+        control("LOOK ↑", "pitchUp", 7, 79)
+        control("BACK", "back", 79, 79)
+        control("LOOK ↓", "pitchDown", 151, 79)
+        control("UP", "up", 7, 115)
+        control("DOWN", "down", 79, 115)
+        control("EXIT", nil, 151, 115, "exit")
+        freecam.connection = RS.RenderStepped:Connect(function(dt)
+            if not freecam.active or not workspace.CurrentCamera then return end
+            local current = workspace.CurrentCamera
+            local f = freecam.flags
+            local forward = (f.forward and 1 or 0) - (f.back and 1 or 0)
+            local side = (f.right and 1 or 0) - (f.left and 1 or 0)
+            local vertical = (f.up and 1 or 0) - (f.down and 1 or 0)
+            local move = current.CFrame.LookVector * forward + current.CFrame.RightVector * side + Vector3.new(0, vertical, 0)
+            if move.Magnitude > 0 then current.CFrame = current.CFrame + move.Unit * 28 * dt end
+            local yaw = ((f.yawRight and 1 or 0) - (f.yawLeft and 1 or 0)) * math.rad(85) * dt
+            local pitch = ((f.pitchDown and 1 or 0) - (f.pitchUp and 1 or 0)) * math.rad(65) * dt
+            if yaw ~= 0 or pitch ~= 0 then current.CFrame = current.CFrame * CFrame.Angles(pitch, yaw, 0) end
+        end)
+        setFooter("Mobile freecam active. Tap movement/look controls; EXIT restores your camera.")
+    end
+
+    addCommand("Mobile Freecam", "Local camera movement with touch controls; does not move your character", startFreecam, "freecam camera fly noclip view", "Camera")
+    addCommand("Stop Freecam", "Restore your normal camera", stopFreecam, "freecam exit camera restore", "Camera")
+    addCommand("Low Graphics Mode", "Reduce local shadows and visual effects; restore with lowgfx off", function() setLowGraphics(not lowGraphics) end, "lowgfx performance lag graphics particles shadows", "Performance")
+    addCommand("Notifications On / Off", "Mute or restore Saiki toast notifications without disabling chat", function() setNotifications(not notificationsMuted) end, "notify notifications mute alerts", "Settings")
+    addCommand("List Waypoints", "Show locally saved waypoint names", function() waypointCommand("list") end, "waypoint location marker", "Utilities")
+
+    local commandAliases = {
+        help = "help", commands = "help", chat = "chat", dm = "chat", dms = "chat",
+        gfx = "graphics", graphics = "graphics", sky = "sky", hide = "hide", show = "show", toggle = "toggle",
+        fps = "fps", hud = "fps", performance = "fps", rejoin = "rejoin",
+        placeid = "placeid", jobid = "jobid", username = "username", userid = "userid", displayname = "displayname", coords = "coords", coordinates = "coords",
+        spectate = "spectate", watch = "spectate", unspectate = "unspectate", reset = "reset", fov = "fov",
+        theme = "theme", notifications = "notifications", notify = "notifications", lowgfx = "lowgfx", waypoint = "waypoint", wp = "waypoint",
+        profile = "profile", scale = "scale", copy = "copy", freecam = "freecam", cam = "freecam", bind = "bind", opacity = "opacity"
+    }
+    local function runTypedCommand(raw)
+        raw = tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        raw = raw:gsub("^[!/]+", "")
+        if raw == "" then setFooter("Type a command first. Try help."); return end
+        local token, args = raw:match("^(%S+)%s*(.-)$")
+        token = (token or ""):lower()
+        local command = commandAliases[token]
+        args = args or ""
+        if not command then setFooter("Unknown command: " .. token .. ". Type help to see commands."); return end
+        if command == "help" then
+            setFooter("Commands: chat, gfx, sky, hide, show, fps, rejoin, spectate [player], unspectate, reset, fov [number], theme [red|blue|purple|green|default], opacity [0-0.7], scale [0.8-1.2], bind [hub|hud] [key], freecam [off], notifications [on|off], lowgfx [on|off], waypoint [add|list|copy|delete], profile [save|load|delete|list] [name], copy placeid/jobid/username/userid/displayname/coords.")
+        elseif command == "chat" then HOST.SetPage(1); HOST.SetVisible(true); panel.Visible = false
+        elseif command == "graphics" then HOST.SetPage(2); HOST.SetVisible(true); panel.Visible = false
+        elseif command == "sky" then HOST.SetPage(3); HOST.SetVisible(true); panel.Visible = false
+        elseif command == "hide" then HOST.SetVisible(false); panel.Visible = false
+        elseif command == "show" then HOST.SetVisible(true); panel.Visible = false
+        elseif command == "toggle" then HOST.SetVisible(not HOST.Sheet.Visible); panel.Visible = false
+        elseif command == "fps" then toggleHud()
+        elseif command == "rejoin" then panel.Visible = false; pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end)
+        elseif command == "placeid" then clipboard(game.PlaceId)
+        elseif command == "jobid" then clipboard(game.JobId)
+        elseif command == "username" then clipboard(LP.Name)
+        elseif command == "userid" then clipboard(LP.UserId)
+        elseif command == "displayname" then clipboard(LP.DisplayName)
+        elseif command == "copy" then
+            local what = args:lower()
+            if what == "placeid" or what == "place id" then clipboard(game.PlaceId)
+            elseif what == "jobid" or what == "job id" then clipboard(game.JobId)
+            elseif what == "username" then clipboard(LP.Name)
+            elseif what == "userid" or what == "user id" then clipboard(LP.UserId)
+            elseif what == "displayname" or what == "display name" then clipboard(LP.DisplayName)
+            elseif what == "coords" or what == "coordinates" then
+                local root = getRoot(); if not root then setFooter("Your character is not ready."); return end
+                local v = root.Position; clipboard(string.format("%.2f, %.2f, %.2f", v.X, v.Y, v.Z))
+            else setFooter("Copy commands: copy placeid, jobid, username, userid, displayname, coords.") end
+        elseif command == "coords" then
+            local root = getRoot(); if not root then setFooter("Your character is not ready."); return end
+            local v = root.Position; clipboard(string.format("%.2f, %.2f, %.2f", v.X, v.Y, v.Z))
+        elseif command == "spectate" then
+            if args ~= "" then target.Text = args end
+            spectate()
+        elseif command == "unspectate" then stopSpectating()
+        elseif command == "freecam" then
+            if args:lower() == "off" or args:lower() == "stop" then stopFreecam() else startFreecam() end
+        elseif command == "bind" then
+            local which, keyName = args:match("^(%S+)%s+(%S+)$")
+            local key = keyName and Enum.KeyCode[keyName]
+            if not key then setFooter("Use bind hub RightShift or bind hud RightAlt (desktop keyboard only).")
+            elseif which:lower() == "hub" then state.paletteKey = key; persist(); setFooter("Hub keybind set to " .. key.Name .. ".")
+            elseif which:lower() == "hud" then state.hudKey = key; persist(); setFooter("HUD keybind set to " .. key.Name .. ".")
+            else setFooter("Bind targets: hub or hud.") end
+        elseif command == "opacity" then
+            local value = tonumber(args)
+            if not value then setFooter("Use opacity 0.0 to 0.7 (higher is more transparent).")
+            else panel.BackgroundTransparency = math.clamp(value, 0, 0.7); setFooter("Command Hub transparency set to " .. tostring(panel.BackgroundTransparency) .. ".") end
+        elseif command == "reset" then
+            local char = LP.Character; local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0; setFooter("Character reset requested.") else setFooter("Your character is not ready.") end
+        elseif command == "fov" then
+            local value = tonumber(args) or 70
+            value = math.clamp(value, 40, 120)
+            local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = value; setFooter("Local camera FOV set to " .. tostring(value) .. ".") end
+        elseif command == "theme" then
+            local themes = { red = Color3.fromRGB(220,38,65), blue = Color3.fromRGB(45,130,235), purple = Color3.fromRGB(145,85,220), green = Color3.fromRGB(35,175,125), default = Color3.fromRGB(220,38,65) }
+            local chosen = themes[args:lower()]
+            if not chosen then setFooter("Theme options: red, blue, purple, green, default."); return end
+            red = chosen; launcher.BackgroundColor3 = red; runCommand.BackgroundColor3 = red; close.BackgroundColor3 = red; saveProfile.BackgroundColor3 = red
+            local outline = panel:FindFirstChildOfClass("UIStroke"); if outline then outline.Color = red end
+            setFooter("Command Hub accent changed to " .. args:lower() .. ".")
+        elseif command == "notifications" then
+            local v = args:lower(); if v == "on" then setNotifications(true) elseif v == "off" then setNotifications(false) else setFooter("Use notifications on or notifications off.") end
+        elseif command == "lowgfx" then
+            local v = args:lower(); if v == "on" then setLowGraphics(true) elseif v == "off" then setLowGraphics(false) else setFooter("Use lowgfx on or lowgfx off.") end
+        elseif command == "waypoint" then
+            local action, name = args:match("^(%S+)%s*(.-)$"); waypointCommand(action, name)
+        elseif command == "profile" then
+            local action, name = args:match("^(%S+)%s*(.-)$"); action = (action or ""):lower(); name = name or ""
+            if action == "save" then
+                name = name:gsub("[^%w _%-]", ""):sub(1, 28)
+                local rawSettings; pcall(function() if isfile and readfile and isfile(settingsFile) then rawSettings = readfile(settingsFile) end end)
+                if name == "" then setFooter("Usage: profile save [name].") elseif not rawSettings then setFooter("Saiki settings file not found yet; change/save a setting first.") else state.profiles[name] = rawSettings; persist(); setFooter("Saved profile: " .. name); rebuild() end
+            elseif action == "load" then
+                local rawSettings = state.profiles[name]
+                if not rawSettings then setFooter("Profile not found. Use profile list or search profile.") elseif not writefile then setFooter("This executor does not support profile file writing.") else
+                    local ok = pcall(function() writefile(settingsFile, rawSettings) end)
+                    setFooter(ok and ("Restored profile '" .. name .. "'. Re-run Saiki Rechat to apply it.") or "Could not restore this profile.")
+                end
+            elseif action == "delete" then
+                if state.profiles[name] then state.profiles[name] = nil; persist(); setFooter("Deleted profile '" .. name .. "'."); rebuild() else setFooter("Profile not found.") end
+            elseif action == "list" then
+                local names = {}; for profileName in pairs(state.profiles) do names[#names + 1] = profileName end; table.sort(names)
+                setFooter(#names == 0 and "No saved profiles." or ("Profiles: " .. table.concat(names, ", ")))
+            else setFooter("Profile commands: profile save [name], profile load [name], profile delete [name], profile list.") end
+        elseif command == "scale" then
+            local n = tonumber(args); if not n then setFooter("Use scale 0.8 to 1.2 to resize the command hub."); return end
+            local scale = math.clamp(n, 0.8, 1.2)
+            local uiScale = panel:FindFirstChild("CommandHubScale") or make("UIScale", { Name = "CommandHubScale" }, panel)
+            uiScale.Scale = scale; setFooter("Command Hub scale set to " .. tostring(scale) .. ".")
+        end
+    end
+    runCommand.Activated:Connect(function() runTypedCommand(commandInput.Text); commandInput:ReleaseFocus() end)
+    commandInput.FocusLost:Connect(function(enterPressed) if enterPressed then runTypedCommand(commandInput.Text) end end)
+
     local function addProfileCommands(out)
         for profileName, raw in pairs(state.profiles) do
             local savedName, savedRaw = profileName, raw
@@ -6152,6 +6422,9 @@ end)
         elseif input.KeyCode == state.hudKey then toggleHud() end
     end)
     HOST.Gui.Destroying:Connect(function()
+        if freecam.active then pcall(stopFreecam) end
+        if lowGraphics then pcall(function() setLowGraphics(false) end) end
+        if notificationsMuted and T then T.notify = originalNotify end
         pcall(function() hudConn:Disconnect() end)
         pcall(function() inputConn:Disconnect() end)
         for _, connection in ipairs(dragConnections) do pcall(function() connection:Disconnect() end) end
@@ -6161,7 +6434,8 @@ end)
     hud.Visible = state.hud
     persist()
     HOST.CommandCenter = { Toggle = function() panel.Visible = not panel.Visible end,
-        Open = function() panel.Visible = true end, ToggleHUD = toggleHud, Profiles = state.profiles }
+        Open = function() panel.Visible = true end, ToggleHUD = toggleHud, Run = runTypedCommand,
+        Profiles = state.profiles, Waypoints = state.waypoints }
 end)()
 
 -- Unified host cleanup handle.
