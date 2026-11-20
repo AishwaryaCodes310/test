@@ -64,32 +64,6 @@ HOST.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pcall(function() HOST.Gui.ScreenInsets = Enum.ScreenInsets.None end)
 HOST.Gui.Parent = PARENT
 
-pcall(function()
-    local old = game:GetService("Lighting"):FindFirstChild("SAIKI_BLUR")
-    if old then old:Destroy() end
-end)
-HOST.Dim = Instance.new("Frame")
-HOST.Dim.Name = "SaikiBackdrop"
-HOST.Dim.BackgroundColor3 = Color3.new(0, 0, 0)
-HOST.Dim.BackgroundTransparency = 1
-HOST.Dim.BorderSizePixel = 0
-HOST.Dim.Position = UDim2.fromScale(0, 0)
-HOST.Dim.Size = UDim2.fromScale(1, 1)
-HOST.Dim.ZIndex = 0
-HOST.Dim.Active = false
-HOST.Dim.Parent = HOST.Gui
-HOST.Blur = nil
-pcall(function()
-    local b = Instance.new("BlurEffect")
-    b.Name = "SAIKI_BLUR"
-    b.Size = 0
-    b.Enabled = true
-    b.Parent = game:GetService("Lighting")
-    HOST.Blur = b
-end)
-HOST.Gui.Destroying:Connect(function()
-    if HOST.Blur then pcall(function() HOST.Blur:Destroy() end) end
-end)
 HOST.Sheet = Instance.new("Frame")
 HOST.Sheet.Name = "SaikiSheet"
 HOST.Sheet.BackgroundTransparency = 1
@@ -123,11 +97,6 @@ local function tween(obj, t, props)
         return TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
     end)
     if ok then tw:Play() end
-end
-
-function HOST.Backdrop(on)
-    tween(HOST.Dim, 0.3, { BackgroundTransparency = on and 0.45 or 1 })
-    if HOST.Blur then tween(HOST.Blur, 0.3, { Size = on and 18 or 0 }) end
 end
 
 local pageTitle = Instance.new("TextLabel")
@@ -179,11 +148,7 @@ HOST.Scroll = Scroll
 HOST.Cols = {}
 HOST.OnScroll = {}
 HOST.SecStart = {}
-HOST.Pages = {}
-HOST.PageStarts = {}
 local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
-local MIN_S, MAX_S = 0.5, 1.5
-local lastVP = Vector2.new(0, 0)
 local curSection = 0
 
 local function paintSection(i)
@@ -226,16 +191,7 @@ end
 
 function HOST.JumpSection(i, instant)
     local sx = HOST.SecStart[i]
-    if sx then HOST.ScrollTo(sx, instant) end
-end
-
--- start of the page that holds canvas position x
-function HOST.PageFor(x)
-    local best = HOST.Pages[1] or 0
-    for i, gx in ipairs(HOST.PageStarts) do
-        if gx <= x + 1 then best = HOST.Pages[i] end
-    end
-    return best
+    if sx then HOST.ScrollTo(sx - PAD_X, instant) end
 end
 HOST.SetPage = function(i) HOST.JumpSection(i) end
 HOST.ChatSees = function() return true end
@@ -246,67 +202,23 @@ function HOST.Relayout()
         local cam = workspace.CurrentCamera
         gs = cam and cam.ViewportSize or Vector2.new(1280, 720)
     end
-    local vw = gs.X
     local compact = gs.Y < 560
     local topH = compact and 58 or 84
-    local botH = topH -- same space above and below, so the cards sit centred
-    -- side margin follows the screen width (about 7%), with a bigger floor on touch screens for notches / rounded corners
-    local m = math.clamp(math.floor(vw * 0.07 + 0.5), 16, 96)
-    if UserInputService.TouchEnabled then m = math.max(m, 44) end
-    pageTitle.Position = UDim2.fromOffset(m, compact and 8 or 26)
+    local botH = topH -- no bottom bar any more: same space above and below, so the cards sit centred
+    pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26)
     pageTitle.TextSize = compact and 20 or 24
-    pageSub.Position = UDim2.fromOffset(m + 1, compact and 34 or 56)
+    pageSub.Position = UDim2.fromOffset(35, compact and 34 or 56)
     Scroll.Position = UDim2.fromOffset(0, topH)
     Scroll.Size = UDim2.new(1, 0, 1, -(topH + botH))
 
-    -- gather columns into groups; a group is what one "page" of the sheet shows (a section, or a chat tab)
-    local groups, byKey = {}, {}
-    for sec = 1, #SECTIONS do
-        for _, col in ipairs(HOST.Cols) do
-            if col.section == sec and #col.cards > 0 then
-                local key = sec .. ":" .. tostring(col.group or 0)
-                local g = byKey[key]
-                if not g then
-                    g = { section = sec, cols = {}, w = 0 }
-                    byKey[key] = g
-                    groups[#groups + 1] = g
-                end
-                g.cols[#g.cols + 1] = col
-            end
-        end
-    end
-    local maxW = 1
-    for _, g in ipairs(groups) do
-        g.w = (#g.cols - 1) * GAP_X
-        for _, col in ipairs(g.cols) do g.w += col.w end
-        if g.w > maxW then maxW = g.w end
-    end
-
-    -- ONE scale for the whole sheet: the widest group has to fit the width, and the cards have to fit the height
-    local scrollH = math.max(1, gs.Y - topH - botH)
-    local avail = math.max(160, scrollH - 12)
-    local sH = avail / DESIGN_H
-    local sW = (vw - 2 * m) / maxW
-    local s = math.clamp(math.min(sH, sW), MIN_S, MAX_S)
-    -- the cards fill the height between the top and bottom space, so there is no empty gap above / below them
-    local A = avail
-    local yBase = math.max(3, math.floor((scrollH - A) / 2 + 0.5)) -- centres the card area in the scroll area
-
-    local oldPages = HOST.Pages
-    local oldPos = Scroll.CanvasPosition.X
-    local pages, starts = {}, {}
+    local A = math.max(160, gs.Y - topH - botH - 12)
+    local s = math.clamp(A / DESIGN_H, 0.5, 1)
+    local x = PAD_X
     table.clear(HOST.SecStart)
-    -- side space that centres a group when it is scrolled to (just the margin when it is wider than the screen)
-    local function padFor(g) return math.max(m, (vw - g.w * s) / 2) end
-    local x = (#groups > 0) and padFor(groups[1]) or m
-    for gi, g in ipairs(groups) do
-        local gx = x
-        local target = math.max(0, gx - padFor(g))
-        pages[gi] = target
-        starts[gi] = gx
-        if not HOST.SecStart[g.section] then HOST.SecStart[g.section] = target end
-        for _, col in ipairs(g.cols) do
-            local cw = math.floor(col.w * s + 0.5)
+    for _, col in ipairs(HOST.Cols) do
+        if #col.cards > 0 then
+            if not HOST.SecStart[col.section] then HOST.SecStart[col.section] = x end
+            local cw = col.w * s
             local fixedSum, flexN = 0, 0
             for _, c in ipairs(col.cards) do
                 if type(c.h) == "number" then fixedSum += c.h * s else flexN += 1 end
@@ -314,39 +226,22 @@ function HOST.Relayout()
             local gaps = (#col.cards - 1) * GAP_Y * s
             local flexH = flexN > 0 and math.max(70 * s, (A - fixedSum - gaps) / flexN) or 0
             local total = fixedSum + gaps + flexH * flexN
-            local y = yBase
-            if col.valign ~= "top" then y = yBase + math.max(0, (A - total) / 2) end
+            local y = 3
+            if col.valign ~= "top" then y = 3 + math.max(0, (A - total) / 2) end
             for _, c in ipairs(col.cards) do
                 local h = (type(c.h) == "number") and (c.h * s) or flexH
-                local ph = math.floor(h + 0.5)
-                c.frame.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
-                c.frame.Size = UDim2.fromOffset(cw, ph)
-                c.stage.Size = UDim2.fromOffset(cw / s, ph / s)
+                c.frame.Position = UDim2.fromOffset(x, y)
+                c.frame.Size = UDim2.fromOffset(cw, h)
+                c.stage.Size = UDim2.fromOffset(cw / s, h / s)
                 c.scale.Scale = s
                 y += h + GAP_Y * s
             end
-            x += cw + GAP_X * s
+            x += cw + GAP_X
         end
     end
-    local lastG = groups[#groups]
-    local pageX = x - GAP_X * s + (lastG and padFor(lastG) or m)
-    HOST.Pages = pages
-    HOST.PageStarts = starts
-    Scroll.CanvasSize = UDim2.fromOffset(math.floor(pageX + 0.5), 0)
-
-    local maxX = math.max(0, pageX - Scroll.AbsoluteSize.X)
-    if lastVP ~= gs and lastVP.X > 0 and #oldPages > 0 and #pages > 0 then
-        -- the screen changed size (rotation / resize): stay on the same page, re-centred
-        local near, bestD = 1, math.huge
-        for i, px in ipairs(oldPages) do
-            local d = math.abs(px - oldPos)
-            if d < bestD then bestD, near = d, i end
-        end
-        Scroll.CanvasPosition = Vector2.new(math.clamp(pages[math.min(near, #pages)], 0, maxX), 0)
-    elseif Scroll.CanvasPosition.X > maxX then
-        Scroll.CanvasPosition = Vector2.new(maxX, 0)
-    end
-    lastVP = gs
+    Scroll.CanvasSize = UDim2.fromOffset(math.max(0, x - GAP_X + PAD_X), 0)
+    local maxX = math.max(0, Scroll.CanvasSize.X.Offset - Scroll.AbsoluteSize.X)
+    if Scroll.CanvasPosition.X > maxX then Scroll.CanvasPosition = Vector2.new(maxX, 0) end
     updateSection()
 end
 
@@ -366,8 +261,8 @@ pcall(function()
 end)
 
 -- a column is a vertical stack of cards; cards are the boxes of the collage
-function HOST.Column(section, width, valign, group)
-    local col = { section = section, w = width, valign = valign, group = group, cards = {} }
+function HOST.Column(section, width, valign)
+    local col = { section = section, w = width, valign = valign, cards = {} }
     HOST.Cols[#HOST.Cols + 1] = col
     -- h = fixed height in design units, or nil to fill what is left of the column
     function col.Card(h, name, plain)
@@ -468,11 +363,10 @@ local hiddenByToggle = {}
 function HOST.SetVisible(v)
     visible = v
     HOST.Sheet.Visible = v
-    HOST.Backdrop(v)
     if not v then
         table.clear(hiddenByToggle)
         for _, child in ipairs(HOST.Gui:GetChildren()) do
-            if child ~= Toggle and child ~= HOST.Sheet and child ~= HOST.Dim and child:IsA("GuiObject") and child.Visible then
+            if child ~= Toggle and child ~= HOST.Sheet and child:IsA("GuiObject") and child.Visible then
                 hiddenByToggle[child] = true
                 child.Visible = false
             end
@@ -528,7 +422,6 @@ end
 
 function HOST.Start()
     HOST.Sheet.Visible = true
-    HOST.Backdrop(true)
     HOST.Relayout()
     HOST.JumpSection(1, true)
 end
@@ -4163,9 +4056,8 @@ end)()
 	end)
 	HOST.ChatSlot.ZIndex = 120
 
-	local curGroup = 1
 	local function addCol(width)
-		local c = HOST.Column(1, width, nil, curGroup)
+		local c = HOST.Column(1, width)
 		cols[#cols + 1] = c
 		return c
 	end
@@ -4189,7 +4081,6 @@ end)()
 
 	-- the other chat pages, each in its own card
 	for idx = 2, 5 do
-		curGroup = idx
 		local pg = pages[idx]
 		if idx == 2 then
 			-- DMs as a collage: search + recent, a tall "in this server" card, then the conversation in three cards
@@ -4303,7 +4194,7 @@ end)()
 		local x0, w = fr.Position.X.Offset, fr.Size.X.Offset
 		local pos, vw = S.CanvasPosition.X, S.AbsoluteSize.X
 		if x0 >= pos and x0 + w <= pos + vw then return end -- already fully on screen
-		HOST.ScrollTo(HOST.PageFor(x0))
+		HOST.ScrollTo(x0 - 20)
 	end
 
 	-- removing the chat (kick / ban / Destroy) removes its cards too
@@ -5941,6 +5832,216 @@ end
 
 
 end)
+
+-----------------------------------------------------------------
+-- SAIKI COMMAND CENTER + PERFORMANCE HUD (additive QoL extension)
+-- Does not replace or modify Chat, DMs, Rank, Settings, or Saiki GFX.
+;(function()
+    local LP = Players.LocalPlayer
+    local UIS = UserInputService
+    local RS = game:GetService("RunService")
+    local Stats = game:GetService("Stats")
+    local TeleportService = game:GetService("TeleportService")
+    local HttpService = game:GetService("HttpService")
+    local folder = "SaikiChatHubCache"
+    local addonFile = folder .. "/saiki_qol_" .. tostring(LP.UserId) .. ".json"
+    local settingsFile = folder .. "/settings_" .. tostring(LP.UserId) .. ".json"
+    local state = { paletteKey = Enum.KeyCode.RightShift, hudKey = Enum.KeyCode.RightAlt, hud = false, profiles = {} }
+    pcall(function()
+        if isfolder and not isfolder(folder) and makefolder then makefolder(folder) end
+        if isfile and readfile and isfile(addonFile) then
+            local d = HttpService:JSONDecode(readfile(addonFile))
+            if type(d) == "table" then
+                if type(d.paletteKey) == "string" and Enum.KeyCode[d.paletteKey] then state.paletteKey = Enum.KeyCode[d.paletteKey] end
+                if type(d.hudKey) == "string" and Enum.KeyCode[d.hudKey] then state.hudKey = Enum.KeyCode[d.hudKey] end
+                if type(d.hud) == "boolean" then state.hud = d.hud end
+                if type(d.profiles) == "table" then state.profiles = d.profiles end
+            end
+        end
+    end)
+    local function persist()
+        pcall(function()
+            if writefile then
+                writefile(addonFile, HttpService:JSONEncode({ paletteKey = state.paletteKey.Name, hudKey = state.hudKey.Name, hud = state.hud, profiles = state.profiles }))
+            end
+        end)
+    end
+    local function make(class, props, parent)
+        local o = Instance.new(class)
+        for k, v in pairs(props) do o[k] = v end
+        o.Parent = parent
+        return o
+    end
+    local red = Color3.fromRGB(220, 38, 65)
+    local bg = Color3.fromRGB(12, 12, 15)
+    local panel = make("Frame", { Name = "SaikiCommandCenter", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(520, 430), BackgroundColor3 = bg, BackgroundTransparency = 0.04, Visible = false, ZIndex = 300 }, HOST.Gui)
+    make("UICorner", { CornerRadius = UDim.new(0, 16) }, panel)
+    make("UIStroke", { Color = red, Transparency = 0.55, Thickness = 1 }, panel)
+    make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 12), Size = UDim2.new(1, -60, 0, 24),
+        Text = "SAIKI COMMAND CENTER", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = Color3.new(1,1,1), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 301 }, panel)
+    local close = make("TextButton", { Position = UDim2.new(1, -38, 0, 9), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = red,
+        Text = "×", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Color3.new(1,1,1), ZIndex = 302, AutoButtonColor = true }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, close)
+    local search = make("TextBox", { Position = UDim2.fromOffset(16, 48), Size = UDim2.new(1, -32, 0, 36), BackgroundColor3 = Color3.fromRGB(25,25,30),
+        PlaceholderText = "Search commands, pages and utilities…", Text = "", ClearTextOnFocus = false, Font = Enum.Font.Gotham, TextSize = 13,
+        TextColor3 = Color3.new(1,1,1), PlaceholderColor3 = Color3.fromRGB(135,135,145), ZIndex = 301 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 10) }, search)
+    local rows = make("ScrollingFrame", { Position = UDim2.fromOffset(16, 94), Size = UDim2.new(1, -32, 1, -154), BackgroundTransparency = 1,
+        BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0,0), ZIndex = 301 }, panel)
+    local layout = make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
+    local footer = make("TextButton", { Position = UDim2.new(0, 16, 1, -48), Size = UDim2.new(1, -32, 0, 36), BackgroundTransparency = 1,
+        Text = "RightShift: command center   •   RightAlt: performance HUD   •   Click for profiles / keybinds", Font = Enum.Font.Gotham, TextSize = 10,
+        TextColor3 = Color3.fromRGB(145,145,155), TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, ZIndex = 301 }, panel)
+    local function addCommand(name, detail, action, keywords)
+        return { name = name, detail = detail, action = action, keywords = (keywords or ""):lower() }
+    end
+    local hud
+    local function toggleHud()
+        state.hud = not state.hud
+        if hud then hud.Visible = state.hud end
+        persist()
+    end
+    local commands = {
+        addCommand("Open Chat", "Jump to the existing Saiki chat and DM section", function() HOST.SetPage(1); HOST.SetVisible(true); panel.Visible = false end, "server messages dm"),
+        addCommand("Open Graphics", "Open the existing Saiki GFX controls", function() HOST.SetPage(2); HOST.SetVisible(true); panel.Visible = false end, "gfx visuals performance sky"),
+        addCommand("Open Sky Styles", "Open the existing sky-style section", function() HOST.SetPage(3); HOST.SetVisible(true); panel.Visible = false end, "sky atmosphere"),
+        addCommand("Toggle Saiki Window", "Show or hide the Saiki sheet", function() HOST.SetVisible(not HOST.Sheet.Visible); panel.Visible = false end, "hide show toggle gui"),
+        addCommand("Performance HUD", "Show FPS, ping and memory usage", function() toggleHud(); panel.Visible = false end, "fps ping memory stats"),
+        addCommand("Rejoin Server", "Reconnect to this game server", function() panel.Visible = false; pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end) end, "reconnect teleport"),
+        addCommand("Reset Character", "Reset your own character", function() panel.Visible = false; local c = LP.Character; local h = c and c:FindFirstChildOfClass("Humanoid"); if h then h.Health = 0 end end, "respawn reset"),
+        addCommand("Copy Coordinates", "Copy your current position when clipboard support exists", function()
+            local c = LP.Character; local root = c and c:FindFirstChild("HumanoidRootPart"); if not root then return end
+            local p = root.Position; local value = string.format("%.2f, %.2f, %.2f", p.X, p.Y, p.Z)
+            local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
+            if fn then pcall(fn, value); footer.Text = "Copied coordinates: " .. value else footer.Text = value end
+        end, "position location coords"),
+    }
+    local function rebuild()
+        for _, child in ipairs(rows:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
+        local q = search.Text:lower()
+        local count = 0
+        local visibleCommands = table.clone(commands)
+        for profileName in pairs(state.profiles) do
+            local savedName = profileName
+            visibleCommands[#visibleCommands + 1] = addCommand("Load profile: " .. savedName,
+                "Restore saved Saiki settings; rerun Saiki Rechat to apply the restored settings", function()
+                    local raw = state.profiles[savedName]
+                    if type(raw) ~= "string" then footer.Text = "That profile is no longer available."; return end
+                    local ok = pcall(function() writefile(settingsFile, raw) end)
+                    footer.Text = ok and ("Restored " .. savedName .. ". Re-run Saiki Rechat to apply it.") or "Could not restore this profile on this executor."
+                    panel.Visible = false
+                end, "profile preset config settings")
+        end
+        for _, item in ipairs(visibleCommands) do
+            if q == "" or item.name:lower():find(q,1,true) or item.detail:lower():find(q,1,true) or item.keywords:find(q,1,true) then
+                count += 1
+                local b = make("TextButton", { Name = "Command_" .. count, Size = UDim2.new(1, -4, 0, 54), BackgroundColor3 = Color3.fromRGB(22,22,27),
+                    Text = "", AutoButtonColor = true, LayoutOrder = count, ZIndex = 302 }, rows)
+                make("UICorner", { CornerRadius = UDim.new(0, 10) }, b)
+                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 18),
+                    Text = item.name, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.new(1,1,1), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 303 }, b)
+                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 27), Size = UDim2.new(1, -24, 0, 17),
+                    Text = item.detail, Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = Color3.fromRGB(155,155,165), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 303 }, b)
+                b.Activated:Connect(function() pcall(item.action) end)
+            end
+        end
+        rows.CanvasSize = UDim2.fromOffset(0, count * 60)
+        if count == 0 then footer.Text = "No matching commands. Try another search." end
+    end
+    search:GetPropertyChangedSignal("Text"):Connect(rebuild)
+    close.Activated:Connect(function() panel.Visible = false end)
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() rows.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 4) end)
+    rebuild()
+
+    -- Compact performance dashboard. It samples locally and never changes game settings.
+    hud = make("Frame", { Name = "SaikiPerformanceHUD", Position = UDim2.new(1, -230, 0, 90), Size = UDim2.fromOffset(214, 104),
+        BackgroundColor3 = bg, BackgroundTransparency = 0.08, Visible = state.hud, ZIndex = 250 }, HOST.Gui)
+    make("UICorner", { CornerRadius = UDim.new(0, 12) }, hud)
+    make("UIStroke", { Color = red, Transparency = 0.6 }, hud)
+    local hudTitle = make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 16),
+        Text = "SAIKI PERFORMANCE", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = red, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 251 }, hud)
+    local hudStats = make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 27), Size = UDim2.new(1, -20, 1, -34),
+        Text = "FPS: --\nPing: --\nMemory: -- MB", Font = Enum.Font.Code, TextSize = 12, TextColor3 = Color3.new(1,1,1),
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 251 }, hud)
+    local frames, elapsed, fps = 0, 0, 0
+    local hudConn = RS.RenderStepped:Connect(function(dt)
+        frames += 1; elapsed += dt
+        if elapsed >= 0.5 then
+            fps = math.floor(frames / elapsed + 0.5); frames, elapsed = 0, 0
+            if state.hud then
+                local ping, memory = "--", "--"
+                pcall(function() ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValueString() end)
+                pcall(function() memory = string.format("%.0f", Stats:GetTotalMemoryUsageMb()) end)
+                hudStats.Text = "FPS: " .. tostring(fps) .. "\nPing: " .. tostring(ping) .. "\nMemory: " .. tostring(memory) .. " MB"
+            end
+        end
+    end)
+    local capture = nil
+    local inputConn = UIS.InputBegan:Connect(function(input, processed)
+        if capture then
+            if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+                if capture == "palette" then state.paletteKey = input.KeyCode else state.hudKey = input.KeyCode end
+                capture = nil; persist()
+                footer.Text = "Keybind saved. Palette: " .. state.paletteKey.Name .. " | HUD: " .. state.hudKey.Name
+            end
+            return
+        end
+        if processed or UIS:GetFocusedTextBox() then return end
+        if input.KeyCode == state.paletteKey then
+            panel.Visible = not panel.Visible
+        elseif input.KeyCode == state.hudKey then
+            state.hud = not state.hud; hud.Visible = state.hud; persist()
+        end
+    end)
+    HOST.Gui.Destroying:Connect(function()
+        pcall(function() hudConn:Disconnect() end)
+        pcall(function() inputConn:Disconnect() end)
+    end)
+
+    -- Keybind editor is available through the command center footer's right-click-free shortcut.
+    local keybindButton = make("TextButton", { Position = UDim2.new(1, -230, 0, 202), Size = UDim2.fromOffset(214, 26),
+        BackgroundColor3 = Color3.fromRGB(25,25,30), Text = "Edit keybinds", Font = Enum.Font.GothamBold, TextSize = 10,
+        TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 252 }, HOST.Gui)
+    make("UICorner", { CornerRadius = UDim.new(0, 8) }, keybindButton)
+    keybindButton.Activated:Connect(function()
+        footer.Text = "Press a key for Command Center…"; capture = "palette"
+        task.delay(0.15, function() if capture == "palette" then return end end)
+    end)
+    local hudBindButton = make("TextButton", { Position = UDim2.new(1, -230, 0, 232), Size = UDim2.fromOffset(214, 26),
+        BackgroundColor3 = Color3.fromRGB(25,25,30), Text = "Edit HUD keybind", Font = Enum.Font.GothamBold, TextSize = 10,
+        TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 252 }, HOST.Gui)
+    make("UICorner", { CornerRadius = UDim.new(0, 8) }, hudBindButton)
+    hudBindButton.Activated:Connect(function() footer.Text = "Press a key for Performance HUD…"; capture = "hud" end)
+
+    -- Profile save/load uses Saiki's existing settings file without altering its schema.
+    local profileName = make("TextBox", { Position = UDim2.fromOffset(16, 0), Size = UDim2.fromOffset(190, 30), BackgroundColor3 = Color3.fromRGB(25,25,30),
+        PlaceholderText = "Profile name", Text = "", ClearTextOnFocus = false, Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 302 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 8) }, profileName)
+    local saveProfile = make("TextButton", { Position = UDim2.fromOffset(214, 0), Size = UDim2.fromOffset(92, 30), BackgroundColor3 = red,
+        Text = "Save profile", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 302 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 8) }, saveProfile)
+    saveProfile.Activated:Connect(function()
+        local name = profileName.Text:gsub("[^%w _%-]", ""):sub(1, 28)
+        if name == "" then footer.Text = "Enter a profile name first."; return end
+        local raw
+        pcall(function() if isfile and readfile and isfile(settingsFile) then raw = readfile(settingsFile) end end)
+        if not raw then footer.Text = "No saved Saiki settings file was found yet."; return end
+        state.profiles[name] = raw; persist(); footer.Text = "Saved profile: " .. name
+    end)
+    -- Expose the profile controls via the footer label's double click; avoids changing existing tabs/cards.
+    footer.Activated:Connect(function()
+        profileName.Visible = not profileName.Visible; saveProfile.Visible = profileName.Visible
+        keybindButton.Visible = profileName.Visible; hudBindButton.Visible = profileName.Visible
+    end)
+    profileName.FocusLost:Connect(function() end)
+    state.hud = state.hud == true
+    hud.Visible = state.hud
+    persist()
+    HOST.CommandCenter = { Toggle = function() panel.Visible = not panel.Visible end, Open = function() panel.Visible = true end,
+        ToggleHUD = toggleHud, Profiles = state.profiles }
+end)()
+
 
 -- Unified host cleanup handle.
 HOST.Start()
