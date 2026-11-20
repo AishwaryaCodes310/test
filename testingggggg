@@ -148,7 +148,10 @@ HOST.Scroll = Scroll
 HOST.Cols = {}
 HOST.OnScroll = {}
 HOST.SecStart = {}
+HOST.Pages = {}
 local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
+local MIN_S, MAX_S = 0.5, 1.5
+local lastVP = Vector2.new(0, 0)
 local curSection = 0
 
 local function paintSection(i)
@@ -191,7 +194,16 @@ end
 
 function HOST.JumpSection(i, instant)
     local sx = HOST.SecStart[i]
-    if sx then HOST.ScrollTo(sx - PAD_X, instant) end
+    if sx then HOST.ScrollTo(sx, instant) end
+end
+
+-- start of the page that holds canvas position x
+function HOST.PageFor(x)
+    local best = HOST.Pages[1] or 0
+    for _, px in ipairs(HOST.Pages) do
+        if px <= x + 1 then best = px end
+    end
+    return best
 end
 HOST.SetPage = function(i) HOST.JumpSection(i) end
 HOST.ChatSees = function() return true end
@@ -202,23 +214,66 @@ function HOST.Relayout()
         local cam = workspace.CurrentCamera
         gs = cam and cam.ViewportSize or Vector2.new(1280, 720)
     end
+    local vw = gs.X
     local compact = gs.Y < 560
     local topH = compact and 58 or 84
-    local botH = topH -- no bottom bar any more: same space above and below, so the cards sit centred
-    pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26)
+    local botH = topH -- same space above and below, so the cards sit centred
+    -- side margin follows the screen width (about 7%), with a bigger floor on touch screens for notches / rounded corners
+    local m = math.clamp(math.floor(vw * 0.07 + 0.5), 16, 96)
+    if UserInputService.TouchEnabled then m = math.max(m, 44) end
+    pageTitle.Position = UDim2.fromOffset(m, compact and 8 or 26)
     pageTitle.TextSize = compact and 20 or 24
-    pageSub.Position = UDim2.fromOffset(35, compact and 34 or 56)
+    pageSub.Position = UDim2.fromOffset(m + 1, compact and 34 or 56)
     Scroll.Position = UDim2.fromOffset(0, topH)
     Scroll.Size = UDim2.new(1, 0, 1, -(topH + botH))
 
-    local A = math.max(160, gs.Y - topH - botH - 12)
-    local s = math.clamp(A / DESIGN_H, 0.5, 1)
-    local x = PAD_X
+    -- gather columns into groups; a group is what one "page" of the sheet shows (a section, or a chat tab)
+    local groups, byKey = {}, {}
+    for sec = 1, #SECTIONS do
+        for _, col in ipairs(HOST.Cols) do
+            if col.section == sec and #col.cards > 0 then
+                local key = sec .. ":" .. tostring(col.group or 0)
+                local g = byKey[key]
+                if not g then
+                    g = { section = sec, cols = {}, w = 0 }
+                    byKey[key] = g
+                    groups[#groups + 1] = g
+                end
+                g.cols[#g.cols + 1] = col
+            end
+        end
+    end
+    local maxW = 1
+    for _, g in ipairs(groups) do
+        g.w = (#g.cols - 1) * GAP_X
+        for _, col in ipairs(g.cols) do g.w += col.w end
+        if g.w > maxW then maxW = g.w end
+    end
+
+    -- ONE scale for the whole sheet: the widest group has to fit the width, and the cards have to fit the height
+    local scrollH = math.max(1, gs.Y - topH - botH)
+    local avail = math.max(160, scrollH - 12)
+    local sH = avail / DESIGN_H
+    local sW = (vw - 2 * m) / maxW
+    local s = math.clamp(math.min(sH, sW), MIN_S, MAX_S)
+    -- tall screens (phones held upright) let the cards use the full height, wide screens keep the design shape
+    local A = (sW < sH) and avail or math.min(avail, DESIGN_H * s)
+    A = math.max(160, A)
+    local yBase = math.max(3, math.floor((scrollH - A) / 2 + 0.5)) -- centres the card area in the scroll area
+
+    local oldPages = HOST.Pages
+    local oldPos = Scroll.CanvasPosition.X
+    local pages = {}
     table.clear(HOST.SecStart)
-    for _, col in ipairs(HOST.Cols) do
-        if #col.cards > 0 then
-            if not HOST.SecStart[col.section] then HOST.SecStart[col.section] = x end
-            local cw = col.w * s
+    local pageX = 0
+    for _, g in ipairs(groups) do
+        local gw = g.w * s
+        local pageW = math.max(vw, gw + 2 * m)
+        local x = pageX + (pageW - gw) / 2 -- centred inside its page (starts at the margin when wider than the screen)
+        pages[#pages + 1] = pageX
+        if not HOST.SecStart[g.section] then HOST.SecStart[g.section] = pageX end
+        for _, col in ipairs(g.cols) do
+            local cw = math.floor(col.w * s + 0.5)
             local fixedSum, flexN = 0, 0
             for _, c in ipairs(col.cards) do
                 if type(c.h) == "number" then fixedSum += c.h * s else flexN += 1 end
@@ -226,22 +281,36 @@ function HOST.Relayout()
             local gaps = (#col.cards - 1) * GAP_Y * s
             local flexH = flexN > 0 and math.max(70 * s, (A - fixedSum - gaps) / flexN) or 0
             local total = fixedSum + gaps + flexH * flexN
-            local y = 3
-            if col.valign ~= "top" then y = 3 + math.max(0, (A - total) / 2) end
+            local y = yBase
+            if col.valign ~= "top" then y = yBase + math.max(0, (A - total) / 2) end
             for _, c in ipairs(col.cards) do
                 local h = (type(c.h) == "number") and (c.h * s) or flexH
-                c.frame.Position = UDim2.fromOffset(x, y)
-                c.frame.Size = UDim2.fromOffset(cw, h)
-                c.stage.Size = UDim2.fromOffset(cw / s, h / s)
+                local ph = math.floor(h + 0.5)
+                c.frame.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+                c.frame.Size = UDim2.fromOffset(cw, ph)
+                c.stage.Size = UDim2.fromOffset(cw / s, ph / s)
                 c.scale.Scale = s
                 y += h + GAP_Y * s
             end
-            x += cw + GAP_X
+            x += cw + GAP_X * s
         end
+        pageX += pageW
     end
-    Scroll.CanvasSize = UDim2.fromOffset(math.max(0, x - GAP_X + PAD_X), 0)
-    local maxX = math.max(0, Scroll.CanvasSize.X.Offset - Scroll.AbsoluteSize.X)
-    if Scroll.CanvasPosition.X > maxX then Scroll.CanvasPosition = Vector2.new(maxX, 0) end
+    HOST.Pages = pages
+    Scroll.CanvasSize = UDim2.fromOffset(pageX, 0)
+
+    local maxX = math.max(0, pageX - Scroll.AbsoluteSize.X)
+    if lastVP ~= gs and lastVP.X > 0 and #oldPages > 0 and #pages > 0 then
+        -- the screen changed size (rotation / resize): stay on the same page, re-centred
+        local near = 1
+        for i, px in ipairs(oldPages) do
+            if px <= oldPos + 1 then near = i end
+        end
+        Scroll.CanvasPosition = Vector2.new(math.clamp(pages[math.min(near, #pages)], 0, maxX), 0)
+    elseif Scroll.CanvasPosition.X > maxX then
+        Scroll.CanvasPosition = Vector2.new(maxX, 0)
+    end
+    lastVP = gs
     updateSection()
 end
 
@@ -261,8 +330,8 @@ pcall(function()
 end)
 
 -- a column is a vertical stack of cards; cards are the boxes of the collage
-function HOST.Column(section, width, valign)
-    local col = { section = section, w = width, valign = valign, cards = {} }
+function HOST.Column(section, width, valign, group)
+    local col = { section = section, w = width, valign = valign, group = group, cards = {} }
     HOST.Cols[#HOST.Cols + 1] = col
     -- h = fixed height in design units, or nil to fill what is left of the column
     function col.Card(h, name, plain)
@@ -4056,8 +4125,9 @@ end)()
 	end)
 	HOST.ChatSlot.ZIndex = 120
 
+	local curGroup = 1
 	local function addCol(width)
-		local c = HOST.Column(1, width)
+		local c = HOST.Column(1, width, nil, curGroup)
 		cols[#cols + 1] = c
 		return c
 	end
@@ -4081,6 +4151,7 @@ end)()
 
 	-- the other chat pages, each in its own card
 	for idx = 2, 5 do
+		curGroup = idx
 		local pg = pages[idx]
 		if idx == 2 then
 			-- DMs as a collage: search + recent, a tall "in this server" card, then the conversation in three cards
@@ -4194,7 +4265,7 @@ end)()
 		local x0, w = fr.Position.X.Offset, fr.Size.X.Offset
 		local pos, vw = S.CanvasPosition.X, S.AbsoluteSize.X
 		if x0 >= pos and x0 + w <= pos + vw then return end -- already fully on screen
-		HOST.ScrollTo(x0 - 20)
+		HOST.ScrollTo(HOST.PageFor(x0))
 	end
 
 	-- removing the chat (kick / ban / Destroy) removes its cards too
