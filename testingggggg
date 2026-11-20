@@ -1,7 +1,7 @@
 --!strict
 -- NOVOLINE Unified Sheet | SaikiRechat V2.29 + SaikiMusic V9 + Known GFX V10
 -- One Novoline-style shell: page title, top capsule, bottom navigation pill.
--- The three original modules are mounted below as pages with their logic untouched.
+-- Chat, Music and Graphics are cards on ONE sliding sheet (logic of the three modules untouched).
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
@@ -87,18 +87,25 @@ HOST.ChatSlot = makeSlot("CHAT")
 HOST.MusicSlot = makeSlot("MUSIC")
 HOST.GFXSlot = makeSlot("GFX")
 
-local PAGES = {
-    { name = "Chat", title = "Chat", sub = "Server chat, DMs, profile and rank", slot = HOST.ChatSlot },
-    { name = "Music", title = "Music", sub = "Play songs that everyone using Novoline can hear", slot = HOST.MusicSlot },
-    { name = "Graphics", title = "Graphics", sub = "Change how your game looks, on your screen only", slot = HOST.GFXSlot },
+local SECTIONS = {
+    { name = "Chat", title = "Chat", sub = "Server chat, DMs, profile, rank and settings" },
+    { name = "Music", title = "Music", sub = "Play songs that everyone using Novoline can hear" },
+    { name = "Graphics", title = "Graphics", sub = "Change how your game looks, on your screen only" },
 }
+
+local function tween(obj, t, props)
+    local ok, tw = pcall(function()
+        return TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
+    end)
+    if ok then tw:Play() end
+end
 
 local pageTitle = Instance.new("TextLabel")
 pageTitle.Name = "PageTitle"
 pageTitle.BackgroundTransparency = 1
 pageTitle.Position = UDim2.fromOffset(34, 26)
 pageTitle.Size = UDim2.fromOffset(300, 30)
-pageTitle.Text = PAGES[1].title
+pageTitle.Text = SECTIONS[1].title
 pageTitle.TextSize = 24
 pageTitle.TextColor3 = NOVO.text
 pageTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -110,8 +117,8 @@ local pageSub = Instance.new("TextLabel")
 pageSub.Name = "PageSub"
 pageSub.BackgroundTransparency = 1
 pageSub.Position = UDim2.fromOffset(35, 56)
-pageSub.Size = UDim2.fromOffset(300, 16)
-pageSub.Text = PAGES[1].sub
+pageSub.Size = UDim2.fromOffset(420, 16)
+pageSub.Text = SECTIONS[1].sub
 pageSub.TextSize = 11
 pageSub.TextColor3 = NOVO.mut
 pageSub.TextXAlignment = Enum.TextXAlignment.Left
@@ -152,8 +159,7 @@ pillStroke.Transparency = 0.86
 pillStroke.Thickness = 1
 
 local navBtns = {}
-local navDots = {}
-for i, p in ipairs(PAGES) do
+for i, p in ipairs(SECTIONS) do
     local b = Instance.new("TextButton")
     b.Name = "Nav_" .. p.name
     b.BackgroundTransparency = 1
@@ -169,32 +175,206 @@ for i, p in ipairs(PAGES) do
     navBtns[i] = b
 end
 
-local function tween(obj, t, props)
-    local ok, tw = pcall(function()
-        return TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
-    end)
-    if ok then tw:Play() end
-end
+----------------------------------------------------------------
+-- ONE SLIDING SHEET: every part of Chat, Music and Graphics is a
+-- card on one long sheet that slides left / right.
+----------------------------------------------------------------
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Name = "NovolineScroll"
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.Position = UDim2.fromOffset(0, 84)
+Scroll.Size = UDim2.new(1, 0, 1, -174)
+Scroll.ScrollingDirection = Enum.ScrollingDirection.X
+Scroll.CanvasSize = UDim2.fromOffset(0, 0)
+Scroll.ScrollBarThickness = 3
+Scroll.ScrollBarImageColor3 = Color3.new(1, 1, 1)
+Scroll.ScrollBarImageTransparency = 0.7
+Scroll.HorizontalScrollBarInset = Enum.ScrollBarInset.None
+Scroll.ZIndex = 5
+Scroll.Parent = HOST.Sheet
+HOST.Scroll = Scroll
 
-local pageIdx = 0
-function HOST.SetPage(i)
-    if i == pageIdx or not PAGES[i] then return end
-    local dir = (i > pageIdx) and 1 or -1
-    pageIdx = i
-    for k, p in ipairs(PAGES) do
-        p.slot.Visible = (k == i)
+HOST.Cols = {}
+HOST.OnScroll = {}
+HOST.SecStart = {}
+local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
+local curSection = 0
+
+local function paintSection(i)
+    for k = 1, #SECTIONS do
         tween(navBtns[k], 0.25, { TextColor3 = (k == i) and NOVO.text or NOVO.mut })
     end
-    pageTitle.Text = PAGES[i].title
-    pageSub.Text = PAGES[i].sub
+    pageTitle.Text = SECTIONS[i].title
+    pageSub.Text = SECTIONS[i].sub
     tween(navPill, 0.3, { Position = UDim2.fromOffset(6 + (i - 1) * (BTN_W + 3), 6) })
-    local slot = PAGES[i].slot
-    slot.Position = UDim2.fromOffset(18 * dir, 0)
-    tween(slot, 0.3, { Position = UDim2.fromScale(0, 0) })
 end
+
+local function updateSection()
+    local pos = Scroll.CanvasPosition.X
+    local vw = Scroll.AbsoluteSize.X
+    local maxX = math.max(0, Scroll.CanvasSize.X.Offset - vw)
+    local probe = pos + math.min(vw * 0.3, 260)
+    local idx = 1
+    for k = 1, #SECTIONS do
+        local sx = HOST.SecStart[k]
+        if sx and sx - 10 <= probe then idx = k end
+    end
+    if maxX > 0 and pos >= maxX - 4 then
+        for k = #SECTIONS, 1, -1 do
+            if HOST.SecStart[k] then idx = k break end
+        end
+    end
+    if idx ~= curSection then
+        curSection = idx
+        paintSection(idx)
+    end
+    for _, fn in ipairs(HOST.OnScroll) do pcall(fn) end
+end
+Scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(updateSection)
+
+function HOST.ScrollTo(x, instant)
+    local maxX = math.max(0, Scroll.CanvasSize.X.Offset - Scroll.AbsoluteSize.X)
+    x = math.clamp(x, 0, maxX)
+    if instant then
+        Scroll.CanvasPosition = Vector2.new(x, 0)
+    else
+        tween(Scroll, 0.4, { CanvasPosition = Vector2.new(x, 0) })
+    end
+end
+
+function HOST.JumpSection(i, instant)
+    local sx = HOST.SecStart[i]
+    if sx then HOST.ScrollTo(sx - PAD_X, instant) end
+end
+HOST.SetPage = function(i) HOST.JumpSection(i) end
+HOST.ChatSees = function() return true end
 for i, b in ipairs(navBtns) do
-    b.Activated:Connect(function() HOST.SetPage(i) end)
+    b.Activated:Connect(function() HOST.JumpSection(i) end)
 end
+
+function HOST.Relayout()
+    local gs = HOST.Gui.AbsoluteSize
+    if gs.X <= 0 or gs.Y <= 0 then
+        local cam = workspace.CurrentCamera
+        gs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+    end
+    local compact = gs.Y < 560
+    local topH = compact and 58 or 84
+    local botH = compact and 74 or 90
+    pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26)
+    pageTitle.TextSize = compact and 20 or 24
+    pageSub.Position = UDim2.fromOffset(35, compact and 34 or 56)
+    Scroll.Position = UDim2.fromOffset(0, topH)
+    Scroll.Size = UDim2.new(1, 0, 1, -(topH + botH))
+
+    local A = math.max(160, gs.Y - topH - botH - 12)
+    local s = math.clamp(A / DESIGN_H, 0.5, 1)
+    local x = PAD_X
+    table.clear(HOST.SecStart)
+    for _, col in ipairs(HOST.Cols) do
+        if #col.cards > 0 then
+            if not HOST.SecStart[col.section] then HOST.SecStart[col.section] = x end
+            local cw = col.w * s
+            local fixedSum, flexN = 0, 0
+            for _, c in ipairs(col.cards) do
+                if type(c.h) == "number" then fixedSum += c.h * s else flexN += 1 end
+            end
+            local gaps = (#col.cards - 1) * GAP_Y * s
+            local flexH = flexN > 0 and math.max(70 * s, (A - fixedSum - gaps) / flexN) or 0
+            local total = fixedSum + gaps + flexH * flexN
+            local y = 3
+            if col.valign == "center" then y = 3 + math.max(0, (A - total) / 2) end
+            for _, c in ipairs(col.cards) do
+                local h = (type(c.h) == "number") and (c.h * s) or flexH
+                c.frame.Position = UDim2.fromOffset(x, y)
+                c.frame.Size = UDim2.fromOffset(cw, h)
+                c.stage.Size = UDim2.fromOffset(cw / s, h / s)
+                c.scale.Scale = s
+                y += h + GAP_Y * s
+            end
+            x += cw + GAP_X
+        end
+    end
+    Scroll.CanvasSize = UDim2.fromOffset(math.max(0, x - GAP_X + PAD_X), 0)
+    local maxX = math.max(0, Scroll.CanvasSize.X.Offset - Scroll.AbsoluteSize.X)
+    if Scroll.CanvasPosition.X > maxX then Scroll.CanvasPosition = Vector2.new(maxX, 0) end
+    updateSection()
+end
+
+local layoutQueued = false
+local function queueRelayout()
+    if layoutQueued then return end
+    layoutQueued = true
+    task.defer(function()
+        layoutQueued = false
+        HOST.Relayout()
+    end)
+end
+HOST.Gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueRelayout)
+pcall(function()
+    local cam = workspace.CurrentCamera
+    if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(queueRelayout) end
+end)
+
+-- a column is a vertical stack of cards; cards are the boxes of the collage
+function HOST.Column(section, width, valign)
+    local col = { section = section, w = width, valign = valign, cards = {} }
+    HOST.Cols[#HOST.Cols + 1] = col
+    -- h = fixed height in design units, or nil to fill what is left of the column
+    function col.Card(h, name, plain)
+        local card = Instance.new("Frame")
+        card.Name = name or "Card"
+        card.BackgroundColor3 = NOVO.card
+        card.BackgroundTransparency = 0.1
+        card.BorderSizePixel = 0
+        card.ClipsDescendants = not plain
+        card.ZIndex = 6
+        card.Parent = Scroll
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 18)
+        local st = Instance.new("UIStroke", card)
+        st.Color = Color3.new(1, 1, 1)
+        st.Transparency = 0.9
+        st.Thickness = 1
+        local stage = Instance.new("Frame")
+        stage.Name = "Stage"
+        stage.BackgroundTransparency = 1
+        stage.BorderSizePixel = 0
+        stage.Size = UDim2.fromScale(1, 1)
+        stage.Parent = card
+        local us = Instance.new("UIScale")
+        us.Parent = stage
+        local c = { frame = card, stage = stage, scale = us, h = h }
+        col.cards[#col.cards + 1] = c
+        HOST.Relayout()
+        return stage, c
+    end
+    return col
+end
+
+function HOST.RemoveColumns(list)
+    for _, col in ipairs(list) do
+        for _, c in ipairs(col.cards) do
+            pcall(function() c.frame:Destroy() end)
+        end
+        col.cards = {}
+        for k, v in ipairs(HOST.Cols) do
+            if v == col then table.remove(HOST.Cols, k) break end
+        end
+    end
+    HOST.Relayout()
+end
+
+-- shift + mouse wheel slides the sheet on PC
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType ~= Enum.UserInputType.MouseWheel or not HOST.Sheet.Visible then return end
+    if not (UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)) then return end
+    local m = UserInputService:GetMouseLocation()
+    local p, sz = Scroll.AbsolutePosition, Scroll.AbsoluteSize
+    if m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y then
+        HOST.ScrollTo(Scroll.CanvasPosition.X - input.Position.Z * 140, true)
+    end
+end)
 
 local Toggle = Instance.new("TextButton")
 Toggle.Name = "NovolineToggle"
@@ -299,7 +479,8 @@ end
 
 function HOST.Start()
     HOST.Sheet.Visible = true
-    HOST.SetPage(1)
+    HOST.Relayout()
+    HOST.JumpSection(1, true)
 end
 
 
@@ -1004,14 +1185,14 @@ local function ChatView(parent, onSend, cooldown, placeholder, onReact)
 	function self.clearReply()
 		self.replyTo = nil
 		replyBar.Visible = false
-		list.Size = UDim2.new(1, 0, 1, -58)
+		if self.split then self.split(false) else list.Size = UDim2.new(1, 0, 1, -58) end
 	end
 	function self.setReply(item)
 		local prev = item.stk and "Sticker" or clean(item.text or "")
 		self.replyTo = { k = tostring(item.key), n = cut(item.name, 40), t = cut(prev, 60) }
 		replyTxt.Text = "Replying to " .. self.replyTo.n .. ": " .. cut(prev, 40)
 		replyBar.Visible = true
-		list.Size = UDim2.new(1, 0, 1, -96)
+		if self.split then self.split(true) else list.Size = UDim2.new(1, 0, 1, -96) end
 		pcall(function() box:CaptureFocus() end)
 	end
 	replyX.Activated:Connect(function() self.clearReply() end)
@@ -1348,6 +1529,7 @@ local function ChatView(parent, onSend, cooldown, placeholder, onReact)
 	end
 
 	self.root, self.box, self.stickerBtn = root, box, stkBtn
+	self.list, self.bar, self.replyBar, self.sugg = list, bar, replyBar, sugg
 	return self
 end
 
@@ -1394,32 +1576,24 @@ local function updateDots()
 		any = any or unread[i]
 	end
 	if btnDot then btnDot.Visible = any end
+	if HOST.SetChatDot then for k = 1, NT do HOST.SetChatDot(k, unread[k]) end end
 end
 local function markUnread(i, uid)
 	if tostring(uid) == ME then return end
-	if isOpen and cur == i then return end
+	if HOST.ChatSees(i) then return end
 	unread[i] = true
 	updateDots()
 end
 
-local function showTab(i)
-	if i == cur then return end
+local function showTab(i, noScroll)
 	if closePicker then closePicker() end
 	if closeMenu then closeMenu() end
-	local dir = (i > cur) and 1 or -1
+	local was = HOST.ChatInView and HOST.ChatInView[i]
 	cur = i
-	for k, pg in ipairs(pages) do pg.Visible = (k == i) end
-	if T.anim ~= false then
-		pages[i].Position = UDim2.fromOffset(26 * dir, 0)
-		tween(pages[i], 0.32, { Position = UDim2.new() })
-	else
-		pages[i].Position = UDim2.new()
-	end
-	tween(ind, 0.32, { Position = UDim2.new((i - 1) / NT, 3, 0, 3) })
-	for k, b in ipairs(tabBtns) do tween(b, 0.2, { TextColor3 = (k == i) and WHITE or T.mut }) end
 	unread[i] = false
 	updateDots()
-	if onShowTab then onShowTab(i) end
+	if not was and onShowTab then onShowTab(i) end
+	if not noScroll and HOST.FocusChat then HOST.FocusChat(i) end
 end
 
 for i, nm in ipairs(TABS) do
@@ -1685,7 +1859,7 @@ function T.showServer(uid, name, text, stk, key, reply, silent)
 	local function plain()
 		views[1].add({ uid = uid, name = name, text = text, stk = stk, key = key, reply = reply })
 		if not silent then markUnread(1, uid) end
-		if not silent and not isOpen and tostring(uid) ~= ME and T.notify then -- window closed: pop-up for new server chat messages
+		if not silent and not HOST.ChatSees(1) and tostring(uid) ~= ME and T.notify then -- window closed: pop-up for new server chat messages
 			T.notify("srv", "Server chat  ·  " .. name, stk and "Sticker" or text)
 		end
 	end
@@ -1702,7 +1876,7 @@ function T.showServer(uid, name, text, stk, key, reply, silent)
 			if not silent then
 				T.playAnc()
 				markUnread(1, uid)
-				if not isOpen and T.notify then T.notify("anc", "Announcement  ·  " .. name, body) end
+				if not HOST.ChatSees(1) and T.notify then T.notify("anc", "Announcement  ·  " .. name, body) end
 			end
 		else
 			plain() -- sender isn't allowed to announce: it's just a normal message
@@ -1850,7 +2024,7 @@ local function refreshUnread()
 	end
 	unread[2] = any
 	updateDots()
-	if home and home.Visible and isOpen and cur == 2 then refreshHome() end
+	if home and home.Visible and HOST.ChatSees(2) then refreshHome() end
 end
 
 -- ===== UI: home (Recent / In Server / Search) + thread =====
@@ -2148,7 +2322,7 @@ function refreshHome()
 	end
 end
 onShowTab = function(i) if i == 2 and home.Visible then refreshHome() end end
-local function homeLive() return alive and isOpen and cur == 2 and home.Visible end
+local function homeLive() return alive and HOST.ChatSees(2) and home.Visible end
 bind(Players.PlayerAdded, function() if homeLive() and searchQ == "" then refreshHome() end end)
 bind(Players.PlayerRemoving, function() task.delay(0.2, function() if homeLive() and searchQ == "" then refreshHome() end end) end)
 end -- home feed
@@ -2235,9 +2409,9 @@ local function dmHandler(key, m)
 	if not st then return end
 	if activeConv then activeConv[#activeConv + 1] = st; activeDirty = true end
 	local e = touchIndex(dm.partner, st, dm.name)
-	if isOpen and cur == 2 and thread.Visible then e.r = st.k end -- I'm looking at it: counts as read
+	if HOST.ChatSees(2) and thread.Visible then e.r = st.k end -- I'm looking at it: counts as read
 	renderStored(st)
-	if uid ~= ME and not (isOpen and cur == 2 and thread.Visible) and T.notify then
+	if uid ~= ME and not (HOST.ChatSees(2) and thread.Visible) and T.notify then
 		T.notify("dm" .. tostring(dm.partner), "New DM  ·  " .. tostring(dm.name or "Someone"), st.s and "Sticker" or st.t)
 	end
 end
@@ -4186,22 +4360,22 @@ task.spawn(function()
 		end
 		if CONFIG.HIDE_ROBLOX_CHAT and n % 2 == 1 then setRbxChat(false) end
 		if REQUEST then
-			if (isOpen and cur == 1) or n % 3 == 0 then pollStream(serverStream, serverHandler) end
-			if isOpen and cur == 1 and n % 2 == 0 then pollReactions(serverStream.rpath, auth, FIREBASE_DB, views[1]) end
-			if isOpen and cur == 2 and dmStream and thread.Visible then
+			if (HOST.ChatSees(1)) or n % 3 == 0 then pollStream(serverStream, serverHandler) end
+			if HOST.ChatSees(1) and n % 2 == 0 then pollReactions(serverStream.rpath, auth, FIREBASE_DB, views[1]) end
+			if HOST.ChatSees(2) and dmStream and thread.Visible then
 				local s = dmStream
 				pollStream(s, function(k, m, silent) if s == dmStream then dmHandler(k, m) end end)
 				if s == dmStream and n % 2 == 0 then pollReactions(s.rpath, dmAuth, DM_FIREBASE_DB, views.dm) end
 			end
 			if n % 3 == 1 then pollInbox() end                 -- ~7.5s: ONE small request tells me who messaged
-			if n % 12 == 8 and refreshNames() and home.Visible and isOpen and cur == 2 then refreshHome() end -- ~30s: keep Recent names current
+			if n % 12 == 8 and refreshNames() and home.Visible and HOST.ChatSees(2) then refreshHome() end -- ~30s: keep Recent names current
 			if n == 2 and not legacyDone then discoverLegacy() end -- once per install
 			if n == 3 or n % 360 == 0 then syncDirectory() end -- Saiki users list (only changes since last sync)
 			if n == 4 then task.spawn(writeMyProfile) end
 			if n == 5 then task.spawn(loadFriends) end
 			if n == 6 or (n % 60 == 0 and not FS.ok) then task.spawn(FS.init) end -- follower login + own profile
 			if n % 120 == 0 and FS.ok then task.spawn(FS.loadMine) end        -- refresh my followers/following every ~5 min
-			if n == 7 and home.Visible and isOpen and cur == 2 then refreshHome() end -- friends / directory just arrived
+			if n == 7 and home.Visible and HOST.ChatSees(2) then refreshHome() end -- friends / directory just arrived
 		end
 		if n % 2 == 0 then flushAll(false) end
 		task.wait(CONFIG.POLL)
@@ -6059,6 +6233,127 @@ end)()
 		refreshBar()
 		if animOn() then tween(stage, 0.3, { GroupTransparency = 0 }) end
 	end)
+end)()
+
+-- ===== NOVOLINE SHEET: lay the chat out as cards on the sliding sheet =====
+;(function()
+	if not HOST.Column then return end
+	local cols, cards, dots = {}, {}, {}
+
+	-- the old window frame stays only as the invisible pop-up layer (sticker picker, message menu, intro)
+	pcall(function()
+		win.BackgroundTransparency = 1
+		for _, ch in ipairs(win:GetChildren()) do
+			if ch:IsA("UIStroke") then ch.Enabled = false end
+			if ch:IsA("Frame") and ch ~= tabBar and ch ~= container and ch.ZIndex == 1 and ch:FindFirstChildOfClass("UIGradient") then
+				ch.Visible = false
+			end
+		end
+		tabBar.Visible = false
+	end)
+	HOST.ChatSlot.ZIndex = 120
+
+	local function addCol(width)
+		local c = HOST.Column(1, width)
+		cols[#cols + 1] = c
+		return c
+	end
+
+	-- column 1: the chat on top, the message box in its own card underneath
+	local sv = views[1]
+	local c1 = addCol(400)
+	local stChat, cardChat = c1.Card(nil, "ServerChat")
+	local stIn, cardIn = c1.Card(58, "MessageBox", true)
+	sv.list.Parent = stChat
+	sv.list.Position = UDim2.new()
+	sv.list.Size = UDim2.fromScale(1, 1)
+	sv.bar.Parent = stIn
+	sv.replyBar.Parent = stIn
+	sv.sugg.Parent = stIn
+	sv.split = function(replying)
+		cardIn.h = replying and 96 or 58
+		HOST.Relayout()
+	end
+	cards[1] = cardChat.frame
+
+	-- the other chat pages, each in its own card
+	for idx = 2, 5 do
+		local pg = pages[idx]
+		if pg then
+			local c = addCol(460)
+			local st, cd = c.Card(nil, "Chat" .. idx)
+			pg.Parent = st
+			pg.Position = UDim2.new()
+			pg.Size = UDim2.fromScale(1, 1)
+			pg.Visible = true
+			cards[idx] = cd.frame
+		end
+	end
+	pages[1].Visible = true
+
+	-- small red dot on a card when something new arrived there
+	for idx, fr in pairs(cards) do
+		local d = Instance.new("Frame")
+		d.Name = "UnreadDot"
+		d.AnchorPoint = Vector2.new(1, 0)
+		d.Position = UDim2.new(1, -12, 0, 12)
+		d.Size = UDim2.fromOffset(8, 8)
+		d.BackgroundColor3 = T.red
+		d.BorderSizePixel = 0
+		d.Visible = false
+		d.ZIndex = 60
+		d.Parent = fr
+		Instance.new("UICorner", d).CornerRadius = UDim.new(1, 0)
+		dots[idx] = d
+	end
+	HOST.SetChatDot = function(i, v) if dots[i] then dots[i].Visible = v and true or false end end
+
+	-- which cards are on screen: a card that comes into view behaves like its tab being opened
+	local inView = {}
+	HOST.ChatInView = inView
+	local function refresh()
+		local S = HOST.Scroll
+		local pos, vw = S.CanvasPosition.X, S.AbsoluteSize.X
+		local bestI, bestV = nil, 0
+		for i, fr in pairs(cards) do
+			local x0, w = fr.Position.X.Offset, fr.Size.X.Offset
+			local vis = math.min(x0 + w, pos + vw) - math.max(x0, pos)
+			local on = w > 0 and (vis >= w * 0.5 or vis >= vw * 0.6)
+			if on and not inView[i] then
+				inView[i] = true
+				unread[i] = false
+				if onShowTab then pcall(onShowTab, i) end
+			elseif not on then
+				inView[i] = false
+			end
+			if vis > bestV then bestV, bestI = vis, i end
+		end
+		if bestI then cur = bestI end
+		updateDots()
+	end
+	HOST.OnScroll[#HOST.OnScroll + 1] = refresh
+	HOST.ChatSees = function(i) return HOST.Sheet.Visible and inView[i] == true end
+
+	HOST.FocusChat = function(i)
+		local fr = cards[i]
+		if not fr then return end
+		local S = HOST.Scroll
+		local x0, w = fr.Position.X.Offset, fr.Size.X.Offset
+		local pos, vw = S.CanvasPosition.X, S.AbsoluteSize.X
+		if x0 >= pos and x0 + w <= pos + vw then return end -- already fully on screen
+		HOST.ScrollTo(x0 - 20)
+	end
+
+	-- removing the chat (kick / ban / Destroy) removes its cards too
+	conns[#conns + 1] = { Disconnect = function()
+		HOST.ChatInView = nil
+		HOST.ChatSees = function() return false end
+		HOST.SetChatDot = nil
+		HOST.FocusChat = nil
+		HOST.RemoveColumns(cols)
+	end }
+
+	HOST.Relayout()
 end)()
 
 end)
@@ -10794,6 +11089,63 @@ for _, category in ipairs(
     )
 end
 
+-- ===== NOVOLINE SHEET: lay the music player out as cards on the sliding sheet =====
+;(function()
+	if not HOST.Column then return end
+	local SEC = 2
+
+	-- the old window stays only as an empty, invisible holder
+	pcall(function()
+		Main.BackgroundTransparency = 1
+		MainStroke.Enabled = false
+		Gradient.Enabled = false
+		Main.ClipsDescendants = false
+		Main.Size = UDim2.fromOffset(2, 2)
+	end)
+
+	-- column 1: title + categories on top, search + song list underneath
+	local c1 = HOST.Column(SEC, 292)
+	local stTop = c1.Card(136, "MusicTitle")
+	Header.Parent = stTop
+	Header.Position = UDim2.new()
+	Header.Size = UDim2.new(1, 0, 0, 54)
+	pcall(function() AnchorCircle.Visible = false end)
+	Nav.Parent = stTop
+	Nav.Position = UDim2.fromOffset(14, 58)
+	Nav.Size = UDim2.new(1, -23, 0, 68)
+	for i, name in ipairs(CATEGORIES) do
+		local b = CategoryButtons[name]
+		if b then
+			local col, row = (i - 1) % 3, math.floor((i - 1) / 3)
+			b.Size = UDim2.new(1 / 3, -5, 0, 29)
+			b.Position = UDim2.new(col / 3, 0, 0, row * 34 + 2)
+		end
+	end
+
+	local stLib = c1.Card(nil, "MusicLibrary")
+	Search.Parent = stLib
+	Search.Position = UDim2.fromOffset(12, 12)
+	Search.Size = UDim2.new(1, -24, 0, 34)
+	List.Parent = stLib
+	List.Position = UDim2.fromOffset(12, 54)
+	List.Size = UDim2.new(1, -24, 1, -66)
+
+	-- column 2: the player in its own card
+	local c2 = HOST.Column(SEC, 328, "center")
+	local stPlayer = c2.Card(314, "MusicPlayer")
+	PlayerPanel.Parent = stPlayer
+	PlayerPanel.Position = UDim2.new()
+	PlayerPanel.Size = UDim2.fromScale(1, 1)
+	PlayerPanel.BackgroundTransparency = 1
+	for _, ch in ipairs(PlayerPanel:GetChildren()) do
+		if ch:IsA("UIStroke") then ch.Enabled = false end
+	end
+	Toast.Parent = stPlayer
+	Toast.Position = UDim2.new(0.5, -135, 1, -44)
+
+	HOST.Relayout()
+end)()
+
 end)
 
 --==================== ORIGINAL KNOWN GFX MODULE ====================
@@ -12154,6 +12506,55 @@ do
 	end))
 end
 
+
+-- ===== NOVOLINE SHEET: lay the graphics settings out as cards on the sliding sheet =====
+;(function()
+	if not HOST.Column then return end
+	local SEC = 3
+
+	-- the old window stays only as an empty, invisible holder
+	pcall(function()
+		main.BackgroundTransparency = 1
+		main.ClipsDescendants = false
+		main.Size = UDim2.fromOffset(2, 2)
+		for _, ch in ipairs(main:GetChildren()) do
+			if ch:IsA("UIStroke") or ch:IsA("UIGradient") then ch.Enabled = false end
+		end
+		bar.Visible = false
+		side.Visible = false
+	end)
+	pcall(function() rail.Visible = false end)
+	pcall(function() lockBtn2.Visible = false end)
+
+	-- first card: name + reset
+	local c0 = HOST.Column(SEC, 240)
+	local st0 = c0.Card(128, "GfxTitle")
+	title.Parent = st0
+	title.Position = UDim2.fromOffset(18, 14)
+	title.Size = UDim2.new(1, -36, 0, 30)
+	resetAll.Parent = st0
+	resetAll.Position = UDim2.new(0, 14, 1, -52)
+	resetAll.Size = UDim2.new(1, -28, 0, 38)
+
+	-- one card per settings page
+	for _, name in ipairs({ "GRAPHICS", "REALISTIC", "SKY", "TIME", "FPS", "SOUND", "STYLE", "CONTACT" }) do
+		local pg = pages[name]
+		if pg then
+			local c = HOST.Column(SEC, 340)
+			local st = c.Card(nil, "Gfx" .. name)
+			pg.Parent = st
+			pg.Position = UDim2.new()
+			pg.Size = UDim2.fromScale(1, 1)
+			pg.BackgroundTransparency = 1
+			pg.Visible = true
+			for _, ch in ipairs(pg:GetChildren()) do
+				if ch:IsA("UIStroke") then ch.Enabled = false end
+			end
+		end
+	end
+
+	HOST.Relayout()
+end)()
 end)
 
 -- Unified host cleanup handle.
