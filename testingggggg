@@ -2021,7 +2021,8 @@ end
 
 -- ONE scrolling feed holds everything: In this server strip, Recent chats, or live search results
 local feed = newScroll(home)
-feed.Position, feed.Size = UDim2.fromOffset(0, 44), UDim2.new(1, 0, 1, -44)
+feed.Position, feed.Size = UDim2.new(), UDim2.fromScale(1, 1)
+local serverFeed = newScroll(home) -- "In this server" card
 local searchQ, lastCands, lastPending = "", nil, false
 
 -- ===== directory (Saiki users), friends, Roblox search =====
@@ -2080,6 +2081,7 @@ local clearBtn = new("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position
 	BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, Text = "×", Font = T.fontB, TextSize = 16, TextColor3 = T.text,
 	AutoButtonColor = false, Visible = false, Parent = searchBar }, { corner(12) })
 bind(clearBtn.Activated, function() searchBox.Text = "" end)
+UI.searchBar = searchBar
 
 local function robloxSearch(q)
 	local ok, data = requestJSON("GET", "https://users.roblox.com/v1/users/search?keyword=" .. enc(q) .. "&limit=10")
@@ -2193,17 +2195,16 @@ end -- search logic
 do -- home feed (private helpers)
 local GREEN = Color3.fromRGB(80, 220, 140)
 local function addStrip(sf, arr, order)
-	local strip = new("ScrollingFrame", { Size = UDim2.new(1, 0, 0, 84), BackgroundTransparency = 1, BorderSizePixel = 0,
-		ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.X, LayoutOrder = order, Parent = sf },
-		{ new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }) })
+	local grid = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+		LayoutOrder = order, Parent = sf }, {
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(66, 80), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }) })
 	for i, e in ipairs(arr) do
-		local c = new("TextButton", { Size = UDim2.fromOffset(70, 80), BackgroundColor3 = WHITE, BackgroundTransparency = e.unread and 0.88 or 0.94,
-			Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = strip }, { corner(14), stroke(0.92) })
-		new("ImageLabel", { Position = UDim2.fromOffset(15, 8), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = WHITE,
+		local c = new("TextButton", { BackgroundColor3 = WHITE, BackgroundTransparency = e.unread and 0.88 or 0.94,
+			Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = grid }, { corner(14), stroke(0.92) })
+		new("ImageLabel", { Position = UDim2.fromOffset(13, 8), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = WHITE,
 			BackgroundTransparency = 0.88, Image = thumb(e.id), Parent = c }, { corner(20) })
 		if e.saiki then
-			new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromOffset(57, 50), Size = UDim2.fromOffset(11, 11),
+			new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromOffset(55, 50), Size = UDim2.fromOffset(11, 11),
 				BackgroundColor3 = GREEN, Parent = c }, { corner(6), new("UIStroke", { Color = T.bg, Thickness = 2 }) })
 		end
 		if e.unread then
@@ -2216,9 +2217,9 @@ local function addStrip(sf, arr, order)
 	end
 end
 
-function buildHome()
-	local keep = feed.CanvasPosition
-	clearList(feed)
+local function buildServer()
+	local keep = serverFeed.CanvasPosition
+	clearList(serverFeed)
 	-- players in this server (history / friends / Saiki users first)
 	local arr = {}
 	for _, p in ipairs(Players:GetPlayers()) do
@@ -2232,15 +2233,22 @@ function buildHome()
 		if a.rank ~= b.rank then return a.rank > b.rank end
 		return a.name:lower() < b.name:lower()
 	end)
-	addHeader(feed, "In this server", 1, (#arr > 0) and (#arr .. " here  •  ● on Saiki") or nil)
-	if #arr == 0 then addEmpty(feed, "No other players in this server.", 2, 34) else addStrip(feed, arr, 2) end
+	addHeader(serverFeed, "In this server", 1, (#arr > 0) and (#arr .. " here  •  ● on Saiki") or nil)
+	if #arr == 0 then addEmpty(serverFeed, "No other players in this server.", 2, 34) else addStrip(serverFeed, arr, 2) end
+	serverFeed.CanvasPosition = keep
+end
+
+function buildHome()
+	buildServer()
+	local keep = feed.CanvasPosition
+	clearList(feed)
 	-- recent conversations
 	local rec = {}
 	for pid, e in pairs(index) do if e.l then rec[#rec + 1] = { id = pid, e = e } end end
 	table.sort(rec, function(a, b) return (a.e.ts or 0) > (b.e.ts or 0) end)
 	addHeader(feed, "Recent", 3, (#rec > 0) and tostring(#rec) or nil)
 	if #rec == 0 then
-		addEmpty(feed, "No conversations yet.\nTap a player above or use search to start one.", 4, 64)
+		addEmpty(feed, "No conversations yet.\nTap a player in the server list or use search to start one.", 4, 64)
 	else
 		for i, it in ipairs(rec) do
 			if i > 60 then break end
@@ -2254,6 +2262,7 @@ end
 
 function refreshHome()
 	if searchQ ~= "" then
+		buildServer()
 		if lastCands then UI.renderResults(lastCands, lastPending) end
 	else
 		buildHome()
@@ -2261,14 +2270,14 @@ function refreshHome()
 end
 onShowTab = function(i) if i == 2 and home.Visible then refreshHome() end end
 local function homeLive() return alive and HOST.ChatSees(2) and home.Visible end
-bind(Players.PlayerAdded, function() if homeLive() and searchQ == "" then refreshHome() end end)
-bind(Players.PlayerRemoving, function() task.delay(0.2, function() if homeLive() and searchQ == "" then refreshHome() end end) end)
+bind(Players.PlayerAdded, function() if homeLive() then refreshHome() end end)
+bind(Players.PlayerRemoving, function() task.delay(0.2, function() if homeLive() then refreshHome() end end) end)
 end -- home feed
 
 -- ===== thread (chat view) =====
 local thread = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = dmPage })
 local backBtn = new("TextButton", { Position = UDim2.fromOffset(14, 2), Size = UDim2.fromOffset(34, 32),
-	BackgroundColor3 = WHITE, BackgroundTransparency = 0.92, Text = "‹", Font = T.fontB, TextSize = 22,
+	BackgroundColor3 = WHITE, BackgroundTransparency = 0.92, Text = "×", Font = T.fontB, TextSize = 20,
 	TextColor3 = T.text, AutoButtonColor = false, Parent = thread }, { corner(12) })
 local dmAv = new("ImageButton", { Position = UDim2.fromOffset(56, 3), Size = UDim2.fromOffset(30, 30),
 	BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, AutoButtonColor = false, Parent = thread }, { corner(15) })
@@ -2279,6 +2288,21 @@ local dmTitle = new("TextLabel", { Position = UDim2.fromOffset(94, 1), Size = UD
 local dmSub = new("TextLabel", { Position = UDim2.fromOffset(94, 19), Size = UDim2.new(1, -206, 0, 14),
 	BackgroundTransparency = 1, Text = "", Font = T.font, TextSize = 11, TextColor3 = T.mut,
 	TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = thread })
+
+-- header card of the conversation: no chat open = quiet placeholder, chat open = back/close, avatar, name
+local function setDMHeader(open)
+	backBtn.Visible, dmAv.Visible = open, open
+	backBtn.Position, backBtn.Size = UDim2.fromOffset(10, 9), UDim2.fromOffset(34, 32)
+	dmAv.Position, dmAv.Size = UDim2.fromOffset(50, 10), UDim2.fromOffset(30, 30)
+	dmTitle.Position = UDim2.fromOffset(open and 88 or 16, 7)
+	dmTitle.Size = UDim2.new(1, open and -98 or -32, 0, 19)
+	dmSub.Position = UDim2.fromOffset(open and 88 or 16, 26)
+	dmSub.Size = UDim2.new(1, open and -98 or -32, 0, 14)
+	if not open then
+		dmTitle.Text, dmSub.Text, dmAv.Image = "No chat open", "Pick someone from Recent, the server list or search", ""
+	end
+end
+setDMHeader(false)
 
 local function renderStored(st)
 	views.dm.add({ uid = st.u, name = (st.u == ME) and LP.DisplayName or dm.name, text = st.t, stk = st.s, key = st.k,
@@ -2335,6 +2359,7 @@ end, CONFIG.COOLDOWN_DM, "Message", function(key, e)
 end)
 views.dm.root.Position = UDim2.fromOffset(0, 38)
 views.dm.root.Size = UDim2.new(1, 0, 1, -38)
+views.dm.notice("Open a chat from Recent, the server list or search.")
 
 local function dmHandler(key, m)
 	local uid = tostring(m.uid or "")
@@ -2364,7 +2389,9 @@ function openThread(id, name, user)
 	if #activeConv > 0 then dmStream.last = activeConv[#activeConv].k; dmStream.primed = true end
 	for i = math.max(1, #activeConv - CONFIG.DM_SHOW + 1), #activeConv do renderStored(activeConv[i]) end
 	dmTitle.Text, dmAv.Image = name, thumb(id)
-	home.Visible, thread.Visible = false, true
+	thread.Visible = true
+	setDMHeader(true)
+	dmSub.Text = (user and user ~= "") and ("@" .. user) or ""
 	if not REQUEST then views.dm.notice("Local demo mode: messages stay on your device.") end
 	local e = touchIndex(id, nil, name, user)
 	if e.l then e.r = e.l end
@@ -2377,7 +2404,10 @@ bind(backBtn.Activated, function()
 	if closeMenu then closeMenu() end
 	flushAll(true)
 	dm.partner, dmStream, activeConv = nil, nil, nil
-	thread.Visible, home.Visible = false, true
+	thread.Visible = false
+	views.dm.clear()
+	views.dm.notice("Open a chat from Recent, the server list or search.")
+	setDMHeader(false)
 	refreshUnread()
 	refreshHome()
 end)
@@ -3946,7 +3976,42 @@ end)()
 	-- the other chat pages, each in its own card
 	for idx = 2, 5 do
 		local pg = pages[idx]
-		if pg then
+		if idx == 2 then
+			-- DMs as a collage: search + recent, a tall "in this server" card, then the conversation in three cards
+			local cA = addCol(290)
+			local stS, cdS = cA.Card(52, "DMSearch", true)
+			local stR, cdR = cA.Card(nil, "DMRecent")
+			local sb = UI and UI.searchBar
+			if sb then
+				sb.Parent = stS
+				sb.Position, sb.Size = UDim2.fromOffset(8, 8), UDim2.new(1, -16, 0, 36)
+			end
+			feed.Parent = stR
+			feed.Position, feed.Size = UDim2.new(), UDim2.fromScale(1, 1)
+
+			local cB = addCol(250)
+			local stV = cB.Card(nil, "DMServer")
+			serverFeed.Parent = stV
+			serverFeed.Position, serverFeed.Size = UDim2.new(), UDim2.fromScale(1, 1)
+
+			local cC = addCol(380)
+			local stH = cC.Card(50, "DMHeader")
+			local stM = cC.Card(nil, "DMMessages")
+			local stI, cdI = cC.Card(58, "DMMessageBox", true)
+			for _, o in ipairs({ backBtn, dmAv, dmTitle, dmSub }) do o.Parent = stH end
+			local dv = views.dm
+			dv.list.Parent = stM
+			dv.list.Position = UDim2.new()
+			dv.list.Size = UDim2.fromScale(1, 1)
+			dv.bar.Parent = stI
+			dv.replyBar.Parent = stI
+			dv.sugg.Parent = stI
+			dv.split = function(replying)
+				cdI.h = replying and 96 or 58
+				HOST.Relayout()
+			end
+			cards[2] = cdR.frame
+		elseif pg then
 			local c = addCol(460)
 			local st, cd = c.Card(nil, "Chat" .. idx)
 			pg.Parent = st
