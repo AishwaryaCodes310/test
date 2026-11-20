@@ -89,6 +89,7 @@ HOST.GFXSlot = makeSlot("GFX")
 local SECTIONS = {
     { name = "Chat", title = "Chat", sub = "Server chat, DMs and settings" },
     { name = "Graphics", title = "Graphics", sub = "Change how your game looks, on your screen only" },
+    { name = "Sky", title = "Sky Styles", sub = "Pick a look for your sky, on your screen only" },
 }
 
 local function tween(obj, t, props)
@@ -4359,6 +4360,7 @@ local function apply()
 	color.Contrast = S.con
 	color.TintColor = S.tint
 	rays.Intensity = S.rays
+	rays.Enabled = true
 	if S.skyOn then pcall(applySky) end
 	dof.FarIntensity = S.dof
 	dof.Enabled = S.dof > 0.01
@@ -4459,316 +4461,25 @@ end
 
 local gui = HOST.Gui
 pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end) -- notch / cutout areas bhi cover ho
-local main = new("Frame", {
-	Size = UDim2.fromOffset(580, 410), Position = UDim2.new(0.5, -290, 0.54, -205), BackgroundColor3 = Color3.fromRGB(12, 12, 14), BackgroundTransparency = 0.1, BorderSizePixel = 0,
-	ClipsDescendants = true,
-}, HOST.GFXSlot)
-new("UICorner", { CornerRadius = UDim.new(0, 20) }, main)
-new("UIGradient", { Rotation = 90, Color = ColorSequence.new(C.bg2, C.bg) }, main)
-rgbify(new("UIStroke", { Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, main), "Color")
+----------------------------------------------------------------- NOVOLINE cards: Graphics + Sky styles
+-- The old window is gone. Everything below is built as cards on the sliding Novoline sheet:
+--   GRAPHICS page: Categories | open category | Quick settings + live FPS
+--   SKY STYLES page: gallery with cover images | style details | adjust
 
--- title bar
-local bar = new("Frame", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, BorderSizePixel = 0 }, main)
-local title = new("TextLabel", {
-	Text = "KNOWN GFX", Font = Enum.Font.GothamBold, TextSize = 19, BackgroundTransparency = 1,
-	Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -50, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
-}, bar)
-title.TextColor3 = C.text
--- window lock (stops dragging)
-local winLocked = false
-local lockBtn2
-local lockPill = new("TextButton", {
-	Text = "LOCK", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, BackgroundColor3 = C.btn, BorderSizePixel = 0,
-	AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0, 22), Size = UDim2.fromOffset(78, 26), AutoButtonColor = false,
-}, bar)
-new("UICorner", { CornerRadius = UDim.new(0, 13) }, lockPill)
-rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, lockPill), "Color")
-local function setLock(v)
-	winLocked = v
-	lockPill.Text = v and "LOCKED" or "LOCK"
-	lockPill.BackgroundColor3 = v and C.red or C.btn
-	if lockBtn2 then lockBtn2.Text = "LOCK WINDOW: " .. (v and "ON" or "OFF") end
-end
-lockPill.MouseButton1Click:Connect(function() setLock(not winLocked) end)
+-- hidden stand-ins so the loading screen code further down keeps working
+local main = new("Frame", { Size = UDim2.fromOffset(2, 2), BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false }, HOST.GFXSlot)
+local circle = new("TextButton", { Size = UDim2.fromOffset(2, 2), BackgroundTransparency = 1, Text = "", Visible = false }, gui)
 
--- open / close with a small animation
-local mainScale = new("UIScale", { Scale = 1 }, main)
-local function toggleMain()
-	if main.Visible then
-		local t = TweenService:Create(mainScale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.85 })
-		t:Play()
-		t.Completed:Connect(function()
-			if mainScale.Scale <= 0.86 then main.Visible = false end
-		end)
-	else
-		main.Visible = true
-		TweenService:Create(mainScale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	end
-end
+-- COVER IMAGES for the sky styles.
+-- By default every style draws its own little sky picture (colours, stars, moon / sun, clouds).
+-- To use a real picture instead, upload an image to Roblox and paste its decal ID here, e.g.
+--   ["Heaven"] = "1234567890",
+local COVER_IDS = {
+}
 
--- circle open / close button (draggable)
-local circle = new("TextButton", {
-	Text = "KG", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text, BackgroundColor3 = C.bg, BorderSizePixel = 0,
-	Size = UDim2.fromOffset(54, 54), Position = UDim2.new(0, 16, 0.5, -27), AutoButtonColor = false,
-}, gui)
-new("UICorner", { CornerRadius = UDim.new(0, 27) }, circle)
-if CIRCLE_ID ~= "" then
-	circle.Text = ""
-	new("ImageLabel", {
-		Image = "rbxassetid://" .. CIRCLE_ID, BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Fit,
-		Size = UDim2.fromScale(1, 1), ZIndex = circle.ZIndex + 1,
-	}, circle)
-end
-rgbify(new("UIStroke", { Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, circle), "Color")
-circle.Visible = false
-do
-	local down, startPos, startIn, moved
-	circle.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			down, startPos, startIn, moved = true, circle.Position, i.Position, false
-		end
-	end)
-	track(UIS.InputChanged:Connect(function(i)
-		if down and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-			local d = i.Position - startIn
-			if d.Magnitude > 6 then moved = true end
-			if moved then
-				circle.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-			end
-		end
-	end))
-	track(UIS.InputEnded:Connect(function(i)
-		if down and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
-			down = false
-			if not moved then toggleMain() end
-		end
-	end))
-end
+-- the sound that is playing right now (read by the loop at the bottom)
+local curIdx, curFade = 0, false
 
--- sidebar (tabs)
-new("Frame", { Position = UDim2.fromOffset(16, 44), Size = UDim2.new(1, -32, 0, 1), BackgroundColor3 = Color3.fromRGB(60, 60, 82), BorderSizePixel = 0 }, main)
-local rgbLine = new("Frame", { Position = UDim2.fromOffset(16, 43), Size = UDim2.new(1, -32, 0, 2), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, main)
-rgbLine.Visible = false
-local side = new("Frame", { Position = UDim2.fromOffset(14, 56), Size = UDim2.new(0, 124, 1, -70), BackgroundColor3 = C.panel, BorderSizePixel = 0 }, main)
-new("UICorner", { CornerRadius = UDim.new(0, 12) }, side)
-rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, side), "Color")
-local tabList = new("Frame", { Size = UDim2.new(1, 0, 1, -58), BackgroundTransparency = 1 }, side)
-new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, tabList)
-new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, tabList)
-
-local pagesFrame = new("Frame", { Position = UDim2.fromOffset(150, 56), Size = UDim2.new(1, -206, 1, -70), BackgroundTransparency = 1 }, main)
-
-local pages, tabBtns = {}, {}
-local activeTab = nil
-
-local function makePage(name)
-	local f = new("ScrollingFrame", {
-		Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.panel, BorderSizePixel = 0, ScrollBarThickness = 5, ScrollingDirection = Enum.ScrollingDirection.Y, ScrollBarImageTransparency = 0,
-		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false,
-	}, pagesFrame)
-	rgbify(f, "ScrollBarImageColor3")
-	new("UICorner", { CornerRadius = UDim.new(0, 10) }, f)
-	rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f), "Color")
-	new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, f)
-	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 16), PaddingBottom = UDim.new(0, 12) }, f)
-	pages[name] = f
-	return f
-end
-
-local function selectTab(name)
-	activeTab = name
-	for n, p in pairs(pages) do p.Visible = (n == name) end
-	for n, b in pairs(tabBtns) do
-		b.BackgroundColor3 = (n == name) and C.field or C.btn
-		if n ~= name then b.TextColor3 = C.sub end
-	end
-end
-
-for i, name in ipairs({ "GRAPHICS", "REALISTIC", "SKY", "TIME", "FPS", "SOUND", "STYLE", "CONTACT" }) do
-	makePage(name)
-	if name ~= "GRAPHICS" then
-		local b = new("TextButton", {
-			Text = name, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.sub, BackgroundColor3 = C.btn, BorderSizePixel = 0,
-			Size = UDim2.new(1, 0, 0, 30), AutoButtonColor = false, LayoutOrder = i,
-		}, tabList)
-		tabBtns[name] = b
-		new("UICorner", { CornerRadius = UDim.new(0, 8) }, b)
-		b.MouseButton1Click:Connect(function() selectTab(name) end)
-	end
-end
-
-local resetAll = new("TextButton", {
-	Text = "RESET ALL", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, BackgroundColor3 = C.red, BorderSizePixel = 0,
-	Position = UDim2.new(0, 10, 1, -48), Size = UDim2.new(1, -20, 0, 38), AutoButtonColor = false,
-}, side)
-
------------------------------------------------------------------ UI helpers (per page)
-local function nextOrder(page)
-	local n = (page:GetAttribute("o") or 0) + 1
-	page:SetAttribute("o", n)
-	return n
-end
-
-local function header(page, text)
-	local l = new("TextLabel", {
-		Text = text, Font = Enum.Font.GothamBold, TextSize = 13, BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 24), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = nextOrder(page),
-	}, page)
-	rgbify(l, "TextColor3")
-end
-
-local function button(parent, text, layoutOrder)
-	local b = new("TextButton", {
-		Text = text, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, BackgroundColor3 = C.btn, BorderSizePixel = 0,
-		AutoButtonColor = false, LayoutOrder = layoutOrder or 0,
-	}, parent)
-	rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b), "Color")
-	new("UICorner", { CornerRadius = UDim.new(0, 8) }, b)
-	return b
-end
-
-local function fullButton(page, text)
-	local b = button(page, text, nextOrder(page))
-	b.Size = UDim2.new(1, 0, 0, 38)
-	return b
-end
-
-local function grid(page)
-	local g = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = nextOrder(page) }, page)
-	new("UIGridLayout", { CellSize = UDim2.new(0.5, -5, 0, 38), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, g)
-	return g
-end
-
-local sliders = {}
-local function slider(page, key, label, min, max, onChange)
-	local row = new("Frame", { Size = UDim2.new(1, 0, 0, 66), BackgroundColor3 = C.field, BorderSizePixel = 0, LayoutOrder = nextOrder(page) }, page)
-	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
-	rgbify(new("UIStroke", { Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row), "Color")
-	local lbl = new("TextLabel", {
-		Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(14, 7), Size = UDim2.new(1, -28, 0, 18), TextXAlignment = Enum.TextXAlignment.Left,
-	}, row)
-	local valLbl = new("TextLabel", {
-		Font = Enum.Font.GothamBold, TextSize = 13, BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(14, 7), Size = UDim2.new(1, -28, 0, 18), TextXAlignment = Enum.TextXAlignment.Right,
-	}, row)
-	rgbify(valLbl, "TextColor3")
-
-	-- [-] and [+] buttons (tap = small step, hold = keep going)
-	local minus = button(row, "-", 0)
-	minus.TextSize = 18
-	minus.Size = UDim2.fromOffset(32, 32)
-	minus.Position = UDim2.fromOffset(10, 28)
-	minus:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(1, 0)
-	local plus = button(row, "+", 0)
-	plus.TextSize = 18
-	plus.Size = UDim2.fromOffset(32, 32)
-	plus.AnchorPoint = Vector2.new(1, 0)
-	plus.Position = UDim2.new(1, -10, 0, 28)
-	plus:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(1, 0)
-
-	local trk = new("Frame", { Position = UDim2.new(0, 54, 0, 40), Size = UDim2.new(1, -108, 0, 8), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, row)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, trk)
-	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0 }, trk)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
-	rgbify(fill, "BackgroundColor3")
-	local knob = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(20, 20), Position = UDim2.new(0, 0, 0.5, 0),
-		BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 2,
-	}, trk)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-	rgbify(new("UIStroke", { Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, knob), "Color")
-	-- touch area over the track (does not block scrolling)
-	local hit = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 48, 0, 26), Size = UDim2.new(1, -96, 0, 36) }, row)
-
-	local fmt = max >= 10 and "%.0f" or "%.2f"
-	local function refresh()
-		local a = math.clamp((S[key] - min) / (max - min), 0, 1)
-		fill.Size = UDim2.new(a, 0, 1, 0)
-		knob.Position = UDim2.new(a, 0, 0.5, 0)
-		lbl.Text = label
-		valLbl.Text = string.format(fmt, S[key])
-	end
-	sliders[key] = refresh
-	refresh()
-
-	local function commit()
-		refresh()
-		if onChange then onChange() end
-		apply()
-	end
-	local function setFromX(x)
-		local a = math.clamp((x - trk.AbsolutePosition.X) / math.max(trk.AbsoluteSize.X, 1), 0, 1)
-		S[key] = min + (max - min) * a
-		commit()
-	end
-	local stepSize = (max - min) / 40
-	local function nudge(dir)
-		S[key] = math.clamp(S[key] + dir * stepSize, min, max)
-		commit()
-	end
-	bindHold(minus, function() nudge(-1) end)
-	bindHold(plus, function() nudge(1) end)
-
-	-- gesture: horizontal drag = change value, vertical drag = scroll the page, tap = jump to that spot
-	local state, startPos = nil, nil
-	hit.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			state, startPos = "pending", i.Position
-		end
-	end)
-	track(UIS.InputChanged:Connect(function(i)
-		if not state then return end
-		if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then return end
-		if state == "pending" then
-			local d = i.Position - startPos
-			if math.abs(d.X) > 8 and math.abs(d.X) > math.abs(d.Y) * 1.2 then
-				state = "drag"
-				page.ScrollingEnabled = false
-				setFromX(i.Position.X)
-			elseif math.abs(d.Y) > 10 then
-				state = nil -- it's a scroll, leave the value alone
-			end
-		elseif state == "drag" then
-			setFromX(i.Position.X)
-		end
-	end))
-	track(UIS.InputEnded:Connect(function(i)
-		if not state then return end
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			if state == "pending" then setFromX(i.Position.X) end
-			state = nil
-			page.ScrollingEnabled = true
-		end
-	end))
-end
-
-local function refreshAll() for _, f in pairs(sliders) do f() end end
-
--- scroll rail on the right: tap = one step, hold = fast scroll
-local rail = new("Frame", { Position = UDim2.new(1, -46, 0, 56), Size = UDim2.new(0, 32, 1, -70), BackgroundTransparency = 1 }, main)
-local upBtn = button(rail, "▲", 0)
-upBtn.Font = Enum.Font.SourceSansBold
-upBtn.TextSize = 16
-upBtn.Size = UDim2.new(1, 0, 0.5, -2)
-local dnBtn = button(rail, "▼", 0)
-dnBtn.Font = Enum.Font.SourceSansBold
-dnBtn.TextSize = 16
-dnBtn.Size = UDim2.new(1, 0, 0.5, -2)
-dnBtn.Position = UDim2.new(0, 0, 0.5, 2)
-local function scrollBy(dy)
-	local p = activeTab and pages[activeTab]
-	if not p then return end
-	local maxY = math.max(0, p.AbsoluteCanvasSize.Y - p.AbsoluteWindowSize.Y)
-	p.CanvasPosition = Vector2.new(0, math.clamp(p.CanvasPosition.Y + dy, 0, maxY))
-end
-bindHold(upBtn, function() scrollBy(-45) end, 0.03)
-bindHold(dnBtn, function() scrollBy(45) end, 0.03)
-
-local lockBtn -- created in the TIME tab
-
------------------------------------------------------------------ GRAPHICS tab
-local pGfx = pages.GRAPHICS
 local GFX_PRESETS = {
 	Cinematic = { bloom = 0.8, sat = -0.05, con = 0.2, rays = 0.15, exp = origE + 0.1, tint = Color3.fromRGB(255, 245, 235) },
 	Vibrant   = { bloom = 0.5, sat = 0.45, con = 0.15, rays = 0.1, exp = origE + 0.2, tint = Color3.new(1, 1, 1) },
@@ -4781,52 +4492,16 @@ local GFX_PRESETS = {
 	Noir      = { bloom = 0.2, sat = -0.5, con = 0.4, rays = 0, exp = origE - 0.1, tint = Color3.fromRGB(235, 235, 235) },
 	HDR       = { bloom = 0.6, sat = 0.35, con = 0.35, rays = 0.25, exp = origE + 0.2, tint = Color3.new(1, 1, 1) },
 }
-header(pGfx, "PRESETS")
-local gfxGrid = grid(pGfx)
-for _, name in ipairs({ "Cinematic", "Vibrant", "Realistic", "Nature", "Soft Dream", "Neon", "Warm", "Cold", "Noir", "HDR" }) do
-	local b = button(gfxGrid, name, 0)
-	b.MouseButton1Click:Connect(function()
-		for k, v in pairs(GFX_PRESETS[name]) do S[k] = v end
-		S.lightOn = true
-		refreshAll()
-		apply()
-	end)
-end
-header(pGfx, "ADJUST")
-slider(pGfx, "bloom", "Glow (bloom)", 0, 2)
-slider(pGfx, "sat", "Colour", -0.5, 1)
-slider(pGfx, "con", "Contrast", -0.2, 0.5)
-slider(pGfx, "rays", "Sun rays", 0, 0.5)
-slider(pGfx, "bright", "Brightness", 0, 6, function() S.lightOn = true end)
-slider(pGfx, "exp", "Exposure", -1, 2, function() S.lightOn = true end)
-
------------------------------------------------------------------ TIME tab
-local pTime = pages.TIME
-header(pTime, "TIME OF DAY")
-lockBtn = fullButton(pTime, "LOCK TIME: OFF")
-lockBtn.MouseButton1Click:Connect(function()
-	S.timeLock = not S.timeLock
-	if S.timeLock then S.time = Lighting.ClockTime end
-	lockBtn.Text = "LOCK TIME: " .. (S.timeLock and "ON" or "OFF")
-	sliders.time()
-end)
-local timeGrid = grid(pTime)
-for _, t in ipairs({ { "Morning", 7 }, { "Noon", 12 }, { "Evening", 18 }, { "Midnight", 0 } }) do
-	local b = button(timeGrid, t[1], 0)
-	b.MouseButton1Click:Connect(function()
-		S.time = t[2]
-		S.timeLock = true
-		lockBtn.Text = "LOCK TIME: ON"
-		sliders.time()
-	end)
-end
-slider(pTime, "time", "Hour", 0, 24, function()
-	S.timeLock = true
-	lockBtn.Text = "LOCK TIME: ON"
-end)
-
------------------------------------------------------------------ SKY tab
-local pSky = pages.SKY
+local RT_PRESETS = {
+	["Ultra Real"] = { bloom = 0.55, sat = 0.28, con = 0.22, rays = 0.3, exp = origE + 0.15, tint = Color3.fromRGB(255, 247, 236),
+		dof = 0.35, soft = 0.3, spec = 1, diff = 1, water = 0.75, vig = 0.35 },
+	["Soft Real"] = { bloom = 0.4, sat = 0.15, con = 0.12, rays = 0.2, exp = origE + 0.1, tint = Color3.fromRGB(255, 250, 244),
+		dof = 0.15, soft = 0.2, spec = 0.8, diff = 0.9, water = 0.5, vig = 0.2 },
+	["Cinematic"] = { bloom = 0.7, sat = -0.05, con = 0.28, rays = 0.15, exp = origE + 0.05, tint = Color3.fromRGB(255, 240, 225),
+		dof = 0.6, soft = 0.4, spec = 1, diff = 0.9, water = 0.7, vig = 0.55 },
+	["Sharp HD"] = { bloom = 0.25, sat = 0.2, con = 0.3, rays = 0.1, exp = origE, tint = Color3.new(1, 1, 1),
+		dof = 0, soft = 0.1, spec = 1, diff = 1, water = 0.6, vig = 0.1 },
+}
 local SKY_PRESETS = {
 	["Heaven"] = { hour = 13, stars = 3000, cover = 0.9, cdens = 0.75, ccol = Color3.fromRGB(255, 255, 255),
 		adens = 0.35, aoff = 0.2, acol = Color3.fromRGB(255, 244, 214), adec = Color3.fromRGB(255, 225, 170), haze = 1, glare = 0.4,
@@ -4915,468 +4590,1109 @@ local SKY_PRESETS = {
 		adens = 0.33, aoff = 0, acol = Color3.fromRGB(190, 160, 250), adec = Color3.fromRGB(255, 150, 215), haze = 1.1, glare = 0.3,
 		bloom = 1.1, sat = 0.45, con = 0.15, rays = 0.2, tint = Color3.fromRGB(250, 230, 255), moon = 18 },
 }
-header(pSky, "SKY STYLES")
-local skyGrid = grid(pSky)
-for _, name in ipairs({ "Heaven", "Starry Night", "Galaxy", "Nebula", "Sunset Dream", "Storm", "Cherry Blossom", "Aurora", "Neon Night", "Golden Hour", "Foggy Morning", "Blood Moon", "Ocean Dawn", "Winter Frost", "Cyberpunk", "Desert Noon", "Paradise", "Angel Light", "Cloud Nine", "Pastel Sky", "Rainbow Day", "Sunrise Glow", "Lavender Dusk", "Crystal Day", "Dreamland", "Silver Moon", "Emerald Mist", "Fairy Tale" }) do
-	local b = button(skyGrid, name, 0)
-	b.MouseButton1Click:Connect(function()
+
+local SKY_NAMES = { "Heaven", "Starry Night", "Galaxy", "Nebula", "Sunset Dream", "Storm", "Cherry Blossom", "Aurora", "Neon Night", "Golden Hour", "Foggy Morning", "Blood Moon", "Ocean Dawn", "Winter Frost", "Cyberpunk", "Desert Noon", "Paradise", "Angel Light", "Cloud Nine", "Pastel Sky", "Rainbow Day", "Sunrise Glow", "Lavender Dusk", "Crystal Day", "Dreamland", "Silver Moon", "Emerald Mist", "Fairy Tale" }
+local SKY_META = {
+	["Heaven"] = { "Soft", "Warm golden light and thick white clouds." },
+	["Starry Night"] = { "Calm", "A clear night full of stars and a bright moon." },
+	["Galaxy"] = { "Neon", "Purple haze, strong glow and a huge moon." },
+	["Nebula"] = { "Neon", "Pink and violet space clouds with heavy bloom." },
+	["Sunset Dream"] = { "Warm", "Orange sunset with long haze and sun rays." },
+	["Storm"] = { "Moody", "Thick grey clouds, no stars and cold, dull light." },
+	["Cherry Blossom"] = { "Soft", "Pink clouds and a gentle spring afternoon." },
+	["Aurora"] = { "Magic", "Green northern lights over a quiet starry sky." },
+	["Neon Night"] = { "Neon", "Magenta clouds and a purple glow after dark." },
+	["Golden Hour"] = { "Warm", "Low golden sun, long rays and warm haze." },
+	["Foggy Morning"] = { "Moody", "Dense morning fog with pale, flat light." },
+	["Blood Moon"] = { "Moody", "A giant red moon over a dark crimson sky." },
+	["Ocean Dawn"] = { "Calm", "Cool blue sky with a pink sunrise at the horizon." },
+	["Winter Frost"] = { "Cold", "Pale icy sky and bright, crisp daylight." },
+	["Cyberpunk"] = { "Neon", "Cyan and pink city night with heavy glow." },
+	["Desert Noon"] = { "Warm", "Clear hot sky, harsh sun and strong glare." },
+	["Paradise"] = { "Soft", "Bright, airy sky with creamy light clouds." },
+	["Angel Light"] = { "Soft", "Glowing clouds and strong rays from above." },
+	["Cloud Nine"] = { "Soft", "A sky packed with fluffy white clouds." },
+	["Pastel Sky"] = { "Soft", "Light pink and blue colours, gentle and clean." },
+	["Rainbow Day"] = { "Bright", "Vivid colours and a fresh, sunny sky." },
+	["Sunrise Glow"] = { "Warm", "Early light with a warm peach horizon." },
+	["Lavender Dusk"] = { "Soft", "Purple evening sky with a pink horizon glow." },
+	["Crystal Day"] = { "Bright", "Clean blue sky, few clouds and sharp contrast." },
+	["Dreamland"] = { "Soft", "Pink and lilac clouds with a dreamy bloom." },
+	["Silver Moon"] = { "Calm", "Cool silver night with a big, clear moon." },
+	["Emerald Mist"] = { "Calm", "Light green mist and a quiet morning feel." },
+	["Fairy Tale"] = { "Magic", "Violet dusk with sparkling stars and soft glow." },
+}
+
+;(function()
+	if not HOST.Column then return end
+	local HttpService = game:GetService("HttpService")
+	local MarketplaceService = game:GetService("MarketplaceService")
+	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(15, 17, 25)
+	local TXT, MUT = Color3.fromRGB(245, 245, 248), Color3.fromRGB(140, 142, 152)
+	local GREEN = Color3.fromRGB(60, 200, 130)
+	local SEC_GFX, SEC_SKY = 2, 3
+	local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
+	local cols = {}
+
+	------------------------------------------------------------- small helpers
+	local function rc(o, r)
+		new("UICorner", { CornerRadius = UDim.new(0, r) }, o)
+		return o
+	end
+	local function line(o, tr)
+		return new("UIStroke", { Color = WHITE, Transparency = tr or 0.92, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
+	end
+	local function txt(parent, text, size, bold, color, props)
+		local l = new("TextLabel", { BackgroundTransparency = 1, Text = text, TextSize = size, TextColor3 = color or TXT, TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd }, parent)
+		if props then
+			for k, v in pairs(props) do l[k] = v end
+		end
+		styleText(l, bold)
+		return l
+	end
+	local function ord(o)
+		local p = o.Parent
+		local n = (p:GetAttribute("o") or 0) + 1
+		p:SetAttribute("o", n)
+		o.LayoutOrder = n
+		return o
+	end
+	local function fmtHour(h)
+		h = h % 24
+		return string.format("%02d:%02d", math.floor(h), math.floor((h % 1) * 60))
+	end
+
+	------------------------------------------------------------- saved choices (accent colour + favourite skies)
+	local PREFS = "KnownGFX_novoline.json"
+	local prefs = { accent = "Novoline", favs = {} }
+	pcall(function()
+		if isfile and readfile and isfile(PREFS) then
+			local d = HttpService:JSONDecode(readfile(PREFS))
+			if type(d) == "table" then
+				if type(d.accent) == "string" then prefs.accent = d.accent end
+				if type(d.favs) == "table" then prefs.favs = d.favs end
+			end
+		end
+	end)
+	local savePending = false
+	local function savePrefs()
+		if savePending then return end
+		savePending = true
+		task.delay(0.6, function()
+			savePending = false
+			pcall(function()
+				if writefile then writefile(PREFS, HttpService:JSONEncode(prefs)) end
+			end)
+		end)
+	end
+
+	------------------------------------------------------------- accent colour (Style category)
+	local PALETTES = {
+		{ "Novoline", Color3.fromRGB(220, 38, 65) },
+		{ "Ocean", Color3.fromRGB(0, 140, 255) },
+		{ "Purple", Color3.fromRGB(140, 100, 255) },
+		{ "Rose", Color3.fromRGB(255, 98, 158) },
+		{ "Emerald", Color3.fromRGB(60, 190, 120) },
+		{ "Gold", Color3.fromRGB(230, 148, 0) },
+	}
+	local ACC = PALETTES[1][2]
+	for _, p in ipairs(PALETTES) do
+		if p[1] == prefs.accent then ACC = p[2] end
+	end
+	local accObjs, accHooks = {}, {}
+	local function accent(inst, prop)
+		accObjs[#accObjs + 1] = { inst, prop }
+		inst[prop] = ACC
+		return inst
+	end
+	local function setAccent(c)
+		ACC = c
+		for i = #accObjs, 1, -1 do
+			local o = accObjs[i]
+			if o[1].Parent then o[1][o[2]] = c else table.remove(accObjs, i) end
+		end
+		for _, f in ipairs(accHooks) do pcall(f) end
+	end
+
+	------------------------------------------------------------- toggles shared by rows and quick tiles
+	local sliders = {}
+	local function refreshAll()
+		for _, f in pairs(sliders) do f() end
+	end
+	local T = {}
+	local function regToggle(key, get, set)
+		T[key] = { get = get, set = set, paints = {} }
+	end
+	local function paintToggle(key)
+		local t = T[key]
+		if not t then return end
+		local v = t.get()
+		for _, p in ipairs(t.paints) do p(v) end
+	end
+	local function flip(key)
+		local t = T[key]
+		if not t then return end
+		t.set(not t.get())
+		paintToggle(key)
+	end
+
+	local function setParticles(on)
+		pcall(function()
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
+					if on then
+						if d.Enabled then
+							fxSaved[d] = true
+							d.Enabled = false
+						end
+					elseif fxSaved[d] and d.Parent then
+						d.Enabled = true
+					end
+				end
+			end
+		end)
+		if not on then fxSaved = {} end
+	end
+	local matchTime = true
+	local activeSky, selectedSky = nil, SKY_NAMES[1]
+	local repaintSky = function() end
+
+	regToggle("timeLock", function() return S.timeLock end, function(v)
+		S.timeLock = v
+		if v then S.time = Lighting.ClockTime end
+		if sliders.time then sliders.time() end
+	end)
+	regToggle("sound", function() return S.sound end, function(v) S.sound = v end)
+	regToggle("shadows", function() return BST.shadows == true end, function(v)
+		BST.shadows = v
+		pcall(function()
+			if v then Lighting.GlobalShadows = false else Lighting.GlobalShadows = OR.gs end
+		end)
+	end)
+	regToggle("fx", function() return BST.fx == true end, function(v)
+		BST.fx = v
+		apply()
+	end)
+	regToggle("particles", function() return BST.particles == true end, function(v)
+		BST.particles = v
+		setParticles(v)
+	end)
+	regToggle("matchTime", function() return matchTime end, function(v) matchTime = v end)
+
+	local function doResetAll()
+		S.dim = 0
+		S.bloom, S.sat, S.con, S.rays = 0, 0, 0, 0
+		S.tint = Color3.new(1, 1, 1)
+		S.bright, S.exp = origB, origE
+		S.lightOn, S.timeLock = false, false
+		Lighting.Brightness = origB
+		Lighting.ExposureCompensation = origE
+		resetSky()
+		restoreRT()
+		activeSky = nil
+		refreshAll()
+		paintToggle("timeLock")
+		apply()
+		repaintSky()
+	end
+
+	------------------------------------------------------------- reusable pieces (Novoline look)
+	local function makeBody(parent)
+		local f = new("ScrollingFrame", {
+			Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+			ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, Visible = false,
+		}, parent)
+		new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, f)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 12) }, f)
+		return f
+	end
+
+	local function section(body, text)
+		return ord(txt(body, text, 10, true, MUT, { Size = UDim2.new(1, 0, 0, 18), TextYAlignment = Enum.TextYAlignment.Bottom }))
+	end
+
+	local function note(body, text, h)
+		return ord(txt(body, text, 11, false, MUT, { Size = UDim2.new(1, 0, 0, h or 30), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top }))
+	end
+
+	local function chip(parent, text, onPick, tone)
+		local b = new("TextButton", {
+			Text = text, TextSize = 11, TextColor3 = TXT, AutoButtonColor = false, BackgroundColor3 = tone or WHITE,
+			BackgroundTransparency = tone and 0.78 or 0.94, BorderSizePixel = 0,
+		}, parent)
+		styleText(b, true)
+		rc(b, 10)
+		line(b, 0.92)
+		local base = b.BackgroundTransparency
+		b.Activated:Connect(function()
+			tween(b, 0.08, { BackgroundTransparency = base - 0.16 })
+			task.delay(0.16, function()
+				if b.Parent then tween(b, 0.25, { BackgroundTransparency = base }) end
+			end)
+			if onPick then onPick(text, b) end
+		end)
+		return b
+	end
+
+	local function chipGrid(body, names, onPick)
+		local g = ord(new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, body))
+		new("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 34), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }, g)
+		for i, name in ipairs(names) do
+			local b = chip(g, name, onPick)
+			b.LayoutOrder = i
+		end
+		return g
+	end
+
+	local function wideChip(body, text, onPick, tone)
+		local b = ord(chip(body, text, onPick, tone))
+		b.Size = UDim2.new(1, 0, 0, 36)
+		if tone then accent(b, "BackgroundColor3") end
+		return b
+	end
+
+	local function toggleRow(body, key, name, text)
+		local row = ord(new("Frame", { Size = UDim2.new(1, 0, 0, text and 62 or 44), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, body))
+		rc(row, 12)
+		line(row)
+		txt(row, name, 13, true, TXT, { Position = UDim2.fromOffset(12, 9), Size = UDim2.new(1, -76, 0, 18) })
+		if text then
+			txt(row, text, 11, false, MUT, { Position = UDim2.fromOffset(12, 28), Size = UDim2.new(1, -76, 0, 28), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+		end
+		local track = new("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(44, 24), BackgroundColor3 = WHITE, BackgroundTransparency = 0.82, Text = "", AutoButtonColor = false, BorderSizePixel = 0 }, row)
+		rc(track, 12)
+		local fill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0 }, track)
+		rc(fill, 12)
+		accent(fill, "BackgroundColor3")
+		local onPos, offPos = UDim2.new(1, -21, 0.5, 0), UDim2.new(0, 3, 0.5, 0)
+		local knob = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = offPos, Size = UDim2.fromOffset(18, 18), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 2 }, track)
+		rc(knob, 9)
+		T[key].paints[#T[key].paints + 1] = function(v)
+			tween(fill, 0.2, { BackgroundTransparency = v and 0 or 1 })
+			tween(knob, 0.2, { Position = v and onPos or offPos })
+		end
+		track.Activated:Connect(function() flip(key) end)
+		paintToggle(key)
+		return row
+	end
+
+	local function makeSlider(body, key, label, min, max, onChange, fmtFn)
+		local row = ord(new("Frame", { Size = UDim2.new(1, 0, 0, 54), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, body))
+		rc(row, 12)
+		line(row)
+		txt(row, label, 12, true, TXT, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -90, 0, 16) })
+		local val = txt(row, "", 12, true, MUT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 8), Size = UDim2.fromOffset(70, 16), TextXAlignment = RIGHT })
+		local trk = new("Frame", { Position = UDim2.new(0, 38, 0, 35), Size = UDim2.new(1, -76, 0, 6), BackgroundColor3 = WHITE, BackgroundTransparency = 0.82, BorderSizePixel = 0 }, row)
+		rc(trk, 3)
+		local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BorderSizePixel = 0 }, trk)
+		rc(fill, 3)
+		accent(fill, "BackgroundColor3")
+		local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(14, 14), Position = UDim2.fromScale(0, 0.5), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 2 }, trk)
+		rc(knob, 7)
+		local function stepBtn(text, x, ax)
+			local b = new("TextButton", { Text = text, TextSize = 16, TextColor3 = TXT, Font = Enum.Font.GothamBold, AutoButtonColor = false, AnchorPoint = Vector2.new(ax, 0), Position = UDim2.new(x, ax == 0 and 10 or -10, 0, 28), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, BorderSizePixel = 0 }, row)
+			rc(b, 11)
+			return b
+		end
+		local minus, plus = stepBtn("-", 0, 0), stepBtn("+", 1, 1)
+		local hit = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 34, 0, 24), Size = UDim2.new(1, -68, 0, 30) }, row)
+
+		local fmtv = fmtFn or function(v) return string.format(max >= 10 and "%.0f" or "%.2f", v) end
+		local function refresh()
+			local a = math.clamp((S[key] - min) / (max - min), 0, 1)
+			fill.Size = UDim2.fromScale(a, 1)
+			knob.Position = UDim2.fromScale(a, 0.5)
+			val.Text = fmtv(S[key])
+		end
+		sliders[key] = refresh
+		refresh()
+		local function commit()
+			refresh()
+			if onChange then onChange() end
+			apply()
+		end
+		local function setFromX(x)
+			local a = math.clamp((x - trk.AbsolutePosition.X) / math.max(trk.AbsoluteSize.X, 1), 0, 1)
+			S[key] = min + (max - min) * a
+			commit()
+		end
+		local stepSize = (max - min) / 40
+		local function nudge(dir)
+			S[key] = math.clamp(S[key] + dir * stepSize, min, max)
+			commit()
+		end
+		bindHold(minus, function() nudge(-1) end)
+		bindHold(plus, function() nudge(1) end)
+
+		-- horizontal drag = change value, vertical drag = scroll, tap = jump to that spot
+		local function lockScroll(v)
+			body.ScrollingEnabled = not v
+			if HOST.Scroll then HOST.Scroll.ScrollingEnabled = not v end
+		end
+		local state, startPos = nil, nil
+		hit.InputBegan:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+				state, startPos = "pending", i.Position
+			end
+		end)
+		track(UIS.InputChanged:Connect(function(i)
+			if not state then return end
+			if i.UserInputType ~= Enum.UserInputType.MouseMovement and i.UserInputType ~= Enum.UserInputType.Touch then return end
+			if state == "pending" then
+				local d = i.Position - startPos
+				if math.abs(d.X) > 8 and math.abs(d.X) > math.abs(d.Y) * 1.2 then
+					state = "drag"
+					lockScroll(true)
+					setFromX(i.Position.X)
+				elseif math.abs(d.Y) > 10 then
+					state = nil
+				end
+			elseif state == "drag" then
+				setFromX(i.Position.X)
+			end
+		end))
+		track(UIS.InputEnded:Connect(function(i)
+			if not state then return end
+			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+				if state == "pending" then setFromX(i.Position.X) end
+				state = nil
+				lockScroll(false)
+			end
+		end))
+		return row
+	end
+
+	------------------------------------------------------------- GRAPHICS page: three columns of cards
+	local CATS = {
+		{ "Looks", "Presets, glow, colour and light", 16 },
+		{ "Realistic", "Depth of field, shadows, reflections, FOV", 13 },
+		{ "Time", "Lock or change the time of day", 6 },
+		{ "Sound", "Ambient sounds and volume", 19 },
+		{ "Performance", "Frame limit and boost options", 12 },
+		{ "Style", "Accent colour of this panel", 6 },
+		{ "About", "Contact and credits", 2 },
+	}
+	local cA = HOST.Column(SEC_GFX, 190)
+	local cB = HOST.Column(SEC_GFX, 340)
+	local cC = HOST.Column(SEC_GFX, 250)
+	cols[#cols + 1], cols[#cols + 2], cols[#cols + 3] = cA, cB, cC
+	local stCats = cA.Card(nil, "GfxCategories")
+	local stMain = cB.Card(nil, "GfxMain")
+	local stQuick = cC.Card(196, "GfxQuick")
+	local stFps = cC.Card(nil, "GfxFps")
+
+	local mainTitle = txt(stMain, CATS[1][1], 16, true, TXT, { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20) })
+	local mainSub = txt(stMain, CATS[1][2], 11, false, MUT, { Position = UDim2.fromOffset(16, 33), Size = UDim2.new(1, -32, 0, 14) })
+	local holder = new("Frame", { Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 1, -56), BackgroundTransparency = 1 }, stMain)
+	local bodies = {}
+	for i = 1, #CATS do bodies[i] = makeBody(holder) end
+	bodies[1].Visible = true
+
+	-- 1 LOOKS ----------------------------------------------------
+	do
+		local b = bodies[1]
+		section(b, "ONE TAP PRESETS")
+		chipGrid(b, { "Cinematic", "Vibrant", "Realistic", "Nature", "Soft Dream", "Neon", "Warm", "Cold", "Noir", "HDR" }, function(name)
+			for k, v in pairs(GFX_PRESETS[name]) do S[k] = v end
+			S.lightOn = true
+			refreshAll()
+			apply()
+		end)
+		section(b, "ADJUST")
+		makeSlider(b, "bloom", "Glow (bloom)", 0, 2)
+		makeSlider(b, "sat", "Colour", -0.5, 1)
+		makeSlider(b, "con", "Contrast", -0.2, 0.5)
+		makeSlider(b, "rays", "Sun rays", 0, 0.5)
+		makeSlider(b, "bright", "Brightness", 0, 6, function() S.lightOn = true end)
+		makeSlider(b, "exp", "Exposure", -1, 2, function() S.lightOn = true end)
+	end
+
+	-- 2 REALISTIC ------------------------------------------------
+	do
+		local b = bodies[2]
+		-- dark edges (vignette) and whole-screen dim live on the screen itself
+		local vigGui = HOST.Gui
+		local function vigFrame(size, pos, rot)
+			local f = new("Frame", { Size = size, Position = pos, BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, vigGui)
+			table.insert(vigGrads, new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new(1, 1) }, f))
+		end
+		vigFrame(UDim2.fromScale(1, 0.3), UDim2.fromScale(0, 0), 90)
+		vigFrame(UDim2.fromScale(1, 0.3), UDim2.fromScale(0, 0.7), 270)
+		vigFrame(UDim2.fromScale(0.22, 1), UDim2.fromScale(0, 0), 0)
+		vigFrame(UDim2.fromScale(0.22, 1), UDim2.fromScale(0.78, 0), 180)
+		dimFull = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0 }, vigGui)
+
+		section(b, "ONE TAP LOOK")
+		chipGrid(b, { "Ultra Real", "Soft Real", "Cinematic", "Sharp HD" }, function(name)
+			for k, v in pairs(RT_PRESETS[name]) do S[k] = v end
+			S.lightOn, S.rtOn, S.waterOn = true, true, true
+			refreshAll()
+			apply()
+		end)
+		wideChip(b, "Reset realistic", function()
+			restoreRT()
+			refreshAll()
+			apply()
+		end, ACC)
+		section(b, "ADJUST")
+		local function rtOn() S.rtOn = true end
+		makeSlider(b, "dof", "Depth of field (far blur)", 0, 1)
+		makeSlider(b, "soft", "Shadow softness", 0, 1, rtOn)
+		makeSlider(b, "spec", "Reflections", 0, 1, rtOn)
+		makeSlider(b, "diff", "Ambient light", 0, 1, rtOn)
+		makeSlider(b, "water", "Water shine", 0, 1, function() S.waterOn = true end)
+		makeSlider(b, "vig", "Vignette (dark edges)", 0, 1)
+		makeSlider(b, "dim", "Screen dark", 0, 1)
+		makeSlider(b, "fov", "Field of view", 40, 100, function() S.fovOn = true end)
+	end
+
+	-- 3 TIME -----------------------------------------------------
+	do
+		local b = bodies[3]
+		toggleRow(b, "timeLock", "Lock time", "Keeps the game clock fixed on the hour you pick.")
+		section(b, "QUICK TIMES")
+		local HOURS = { Morning = 7, Noon = 12, Evening = 18, Midnight = 0 }
+		chipGrid(b, { "Morning", "Noon", "Evening", "Midnight" }, function(name)
+			S.time = HOURS[name]
+			S.timeLock = true
+			paintToggle("timeLock")
+			refreshAll()
+		end)
+		section(b, "HOUR")
+		makeSlider(b, "time", "Hour", 0, 24, function()
+			S.timeLock = true
+			paintToggle("timeLock")
+		end, fmtHour)
+	end
+
+	-- 4 SOUND ----------------------------------------------------
+	do
+		local b = bodies[4]
+		toggleRow(b, "sound", "Sound", "Turn the ambient sound on or off.")
+		makeSlider(b, "vol", "Volume", 0, 1)
+		local nowLbl = ord(txt(b, "Now playing: nothing", 12, true, TXT, { Size = UDim2.new(1, 0, 0, 18) }))
+		local statusLbl = note(b, "Nothing plays until you pick a sound.", 28)
+		section(b, "SOUND LIST")
+		local ENTRIES = {
+			{ id = AMBIENT_SOUND_ID, name = "Nature Birds", fade = true },
+			{ id = "113063653983791" }, { id = "120950818518974" }, { id = "115115619185822" },
+			{ id = "128645406929371" }, { id = "139132289200391" }, { id = "138890398994853" },
+			{ id = "140351878812590" }, { id = "136665072148354" }, { id = "81244860156643" }, { id = "85735197482652" },
+			{ id = "93810693712746" }, { id = "116586402120871" }, { id = "96727522170625" }, { id = "109545400120727" },
+			{ id = "86751112677010" }, { id = "1836406945" },
+		}
+		local nameLbls, playLbls = {}, {}
+		local function repaintSound()
+			for i = 1, #ENTRIES do
+				local on = (i == curIdx)
+				nameLbls[i].TextColor3 = on and ACC or TXT
+				playLbls[i].TextColor3 = on and ACC or MUT
+			end
+		end
+		accHooks[#accHooks + 1] = repaintSound
+		local function playEntry(i)
+			local e = ENTRIES[i]
+			if not e then return end
+			curIdx, curFade = i, e.fade == true
+			nowLbl.Text = "Now playing: " .. (e.name or "...")
+			snd.SoundId = "rbxassetid://" .. e.id
+			snd:Play()
+			statusLbl.Text = "Loading sound..."
+			repaintSound()
+			task.delay(6, function()
+				if snd.Parent and curIdx == i then
+					if snd.IsLoaded then
+						statusLbl.Text = e.fade and "Ready. Birds play in the morning and day, silent at night." or "Ready. Use the Volume slider."
+					else
+						statusLbl.Text = "This sound could not load. Pick another one."
+					end
+				end
+			end)
+		end
+		for i, e in ipairs(ENTRIES) do
+			local r = ord(new("TextButton", { Size = UDim2.new(1, 0, 0, 36), Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, b))
+			rc(r, 10)
+			line(r)
+			nameLbls[i] = txt(r, e.name or ("Sound " .. (i - 1)), 12, true, TXT, { Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -44, 1, 0) })
+			playLbls[i] = new("TextLabel", { BackgroundTransparency = 1, Text = "▶", TextSize = 13, TextColor3 = MUT, Font = Enum.Font.SourceSansBold, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(20, 20), TextXAlignment = RIGHT }, r)
+			r.Activated:Connect(function() playEntry(i) end)
+			if not e.name then
+				task.spawn(function()
+					local ok, info = pcall(function() return MarketplaceService:GetProductInfo(tonumber(e.id)) end)
+					e.name = (ok and info and info.Name) or ("Sound " .. (i - 1))
+					nameLbls[i].Text = e.name
+					if curIdx == i then nowLbl.Text = "Now playing: " .. e.name end
+				end)
+			end
+		end
+		wideChip(b, "Stop sound", function()
+			curIdx = 0
+			nowLbl.Text = "Now playing: nothing"
+			statusLbl.Text = "Sound stopped."
+			repaintSound()
+		end, ACC)
+	end
+
+	-- 5 PERFORMANCE ----------------------------------------------
+	do
+		local b = bodies[5]
+		local capFn = setfpscap or set_fps_cap
+		local capStatus
+		local function setCap(n)
+			if not capFn then
+				capStatus.Text = "This executor has no setfpscap, so the limit can't be set. Boost still works."
+				return
+			end
+			local ok, err = pcall(capFn, n)
+			capStatus.Text = ok and ("Limit: " .. (n == 0 and "Unlimited" or (n .. " FPS"))) or ("Could not set the limit: " .. tostring(err))
+		end
+		section(b, "FRAME LIMIT")
+		chipGrid(b, { "30 FPS", "45 FPS", "60 FPS", "90 FPS", "120 FPS", "144 FPS", "240 FPS", "Unlimited" }, function(name)
+			setCap(tonumber(string.match(name, "%d+")) or 0)
+		end)
+		capStatus = note(b, "Needs an executor with setfpscap.", 28)
+		section(b, "BOOST (MORE FPS, LESS GRAPHICS)")
+		toggleRow(b, "shadows", "Shadows off", "Turns off game shadows for more FPS.")
+		toggleRow(b, "fx", "Glow + sun rays off", "Switches off glow, sun rays and blur.")
+		toggleRow(b, "particles", "Particles off", "Hides particles, trails and beams.")
+		wideChip(b, "Reset performance", function()
+			BST.shadows, BST.fx, BST.particles = false, false, false
+			pcall(function() Lighting.GlobalShadows = OR.gs end)
+			setParticles(false)
+			setCap(0)
+			apply()
+			paintToggle("shadows")
+			paintToggle("fx")
+			paintToggle("particles")
+		end, ACC)
+	end
+
+	-- 6 STYLE ----------------------------------------------------
+	do
+		local b = bodies[6]
+		section(b, "ACCENT COLOUR")
+		local strokes = {}
+		local function paintPal()
+			for name, sk in pairs(strokes) do
+				local sel = (name == prefs.accent)
+				sk.Color = sel and ACC or WHITE
+				sk.Transparency = sel and 0.3 or 0.92
+			end
+		end
+		for _, p in ipairs(PALETTES) do
+			local r = ord(new("TextButton", { Size = UDim2.new(1, 0, 0, 40), Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, b))
+			rc(r, 12)
+			strokes[p[1]] = line(r)
+			local dot = new("Frame", { Position = UDim2.fromOffset(12, 11), Size = UDim2.fromOffset(18, 18), BackgroundColor3 = p[2], BorderSizePixel = 0 }, r)
+			rc(dot, 9)
+			txt(r, p[1], 12, true, TXT, { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(1, -54, 1, 0) })
+			r.Activated:Connect(function()
+				prefs.accent = p[1]
+				setAccent(p[2])
+				savePrefs()
+			end)
+		end
+		accHooks[#accHooks + 1] = paintPal
+		paintPal()
+		note(b, "Changes the colour of sliders, switches and highlights. It is saved on this device.", 30)
+	end
+
+	-- 7 ABOUT ----------------------------------------------------
+	do
+		local b = bodies[7]
+		note(b, "Found a mistake, or is something missing in this script? Please contact me and I will fix it as soon as I can. Suggestions are welcome too. Thanks for using Known GFX!", 66)
+		local status = ord(txt(b, "", 11, false, MUT, { Size = UDim2.new(1, 0, 0, 16) }))
+		local function contactRow(caption, value)
+			local row = ord(new("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, b))
+			rc(row, 12)
+			line(row)
+			txt(row, caption, 10, true, MUT, { Position = UDim2.fromOffset(12, 9), Size = UDim2.new(1, -90, 0, 14) })
+			txt(row, value, 15, true, TXT, { Position = UDim2.fromOffset(12, 27), Size = UDim2.new(1, -90, 0, 22) })
+			local cb = chip(row, "COPY", function()
+				local sc = setclipboard or toclipboard
+				if sc then
+					pcall(sc, value)
+					status.Text = "Copied: " .. value
+				else
+					status.Text = "Copy is not supported here. Username: " .. value
+				end
+			end)
+			cb.AnchorPoint = Vector2.new(1, 0.5)
+			cb.Position = UDim2.new(1, -10, 0.5, 0)
+			cb.Size = UDim2.fromOffset(60, 30)
+		end
+		contactRow("DISCORD", "Hot_sasur_kai")
+		contactRow("ROBLOX USERNAME", "yorichii_566")
+		status.LayoutOrder = 999
+	end
+
+	-- categories card -------------------------------------------
+	local catBtns = {}
+	local function selectCat(i)
+		for k = 1, #CATS do
+			bodies[k].Visible = (k == i)
+			tween(catBtns[k], 0.2, { BackgroundTransparency = (k == i) and 0.88 or 1 })
+		end
+		mainTitle.Text, mainSub.Text = CATS[i][1], CATS[i][2]
+	end
+	do
+		txt(stCats, "Categories", 13, true, TXT, { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18) })
+		for i, cd in ipairs(CATS) do
+			local btn = new("TextButton", { Position = UDim2.fromOffset(8, 38 + (i - 1) * 38), Size = UDim2.new(1, -16, 0, 34), BackgroundColor3 = WHITE, BackgroundTransparency = (i == 1) and 0.88 or 1, Text = "", AutoButtonColor = false, BorderSizePixel = 0 }, stCats)
+			rc(btn, 12)
+			local ic = txt(btn, cd[1]:sub(1, 1), 11, true, INK, { Position = UDim2.fromOffset(8, 7), Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 0, BackgroundColor3 = WHITE, TextXAlignment = CENTER })
+			rc(ic, 7)
+			new("UIGradient", { Rotation = 20, Color = ColorSequence.new(WHITE, Color3.fromRGB(190, 194, 202)) }, ic)
+			txt(btn, cd[1], 12, true, TXT, { Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -66, 1, 0) })
+			txt(btn, tostring(cd[3]), 11, false, MUT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 0), Size = UDim2.fromOffset(22, 34), TextXAlignment = RIGHT })
+			catBtns[i] = btn
+			btn.Activated:Connect(function() selectCat(i) end)
+		end
+		local rb = new("TextButton", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, 34), BackgroundColor3 = WHITE, Text = "Reset all", TextSize = 12, TextColor3 = INK, AutoButtonColor = false, BorderSizePixel = 0 }, stCats)
+		styleText(rb, true)
+		rc(rb, 17)
+		rb.Activated:Connect(doResetAll)
+	end
+
+	-- quick settings card ---------------------------------------
+	do
+		txt(stQuick, "Quick settings", 13, true, TXT, { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18) })
+		local grid = new("Frame", { Position = UDim2.fromOffset(12, 38), Size = UDim2.new(1, -24, 1, -50), BackgroundTransparency = 1 }, stQuick)
+		new("UIGridLayout", { CellSize = UDim2.new(1 / 3, -4, 0, 68), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder }, grid)
+		local function tile(key, label, onText, offText, order, action)
+			local t = new("TextButton", { LayoutOrder = order, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, Text = "", AutoButtonColor = false, BorderSizePixel = 0 }, grid)
+			rc(t, 14)
+			local sk = line(t)
+			local ic = txt(t, label:sub(1, 1), 12, true, INK, { Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(22, 22), BackgroundTransparency = 0, BackgroundColor3 = WHITE, TextXAlignment = CENTER })
+			rc(ic, 8)
+			txt(t, label, 11, true, TXT, { Position = UDim2.fromOffset(8, 34), Size = UDim2.new(1, -12, 0, 14) })
+			local state = txt(t, "", 10, false, MUT, { Position = UDim2.fromOffset(8, 49), Size = UDim2.new(1, -12, 0, 12) })
+			if key then
+				T[key].paints[#T[key].paints + 1] = function(v)
+					state.Text = v and onText or offText
+					tween(t, 0.2, { BackgroundColor3 = v and GREEN or WHITE, BackgroundTransparency = v and 0.8 or 0.94 })
+					tween(sk, 0.2, { Color = v and GREEN or WHITE, Transparency = v and 0.4 or 0.92 })
+				end
+				paintToggle(key)
+				t.Activated:Connect(function() flip(key) end)
+			else
+				state.Text = offText
+				accent(ic, "BackgroundColor3")
+				ic.TextColor3 = WHITE
+				t.Activated:Connect(action)
+			end
+		end
+		tile("timeLock", "Lock time", "On", "Off", 1)
+		tile("sound", "Sound", "On", "Off", 2)
+		tile("shadows", "No shadows", "On", "Off", 3)
+		tile("fx", "No glow", "On", "Off", 4)
+		tile("particles", "No particles", "On", "Off", 5)
+		tile(nil, "Reset all", "", "Tap to reset", 6, doResetAll)
+	end
+
+	-- live FPS card ---------------------------------------------
+	do
+		txt(stFps, "Live FPS", 13, true, TXT, { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18) })
+		local fpsNum = txt(stFps, "-- FPS", 28, true, TXT, { Position = UDim2.fromOffset(14, 32), Size = UDim2.new(1, -28, 0, 34) })
+		local fpsStat = txt(stFps, "", 11, false, MUT, { Position = UDim2.fromOffset(14, 68), Size = UDim2.new(1, -28, 0, 14) })
+		local graph = new("Frame", { Position = UDim2.fromOffset(12, 90), Size = UDim2.new(1, -24, 1, -102), BackgroundTransparency = 1, ClipsDescendants = true }, stFps)
+		local N = 36
+		local bars, hist = {}, {}
+		for i = 1, N do
+			hist[i] = 0
+			local bar = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new((i - 1) / N, 1, 1, 0), Size = UDim2.new(1 / N, -2, 0.04, 0), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, graph)
+			rc(bar, 2)
+			bars[i] = bar
+		end
+		local function colFor(v)
+			if v >= 55 then return Color3.fromRGB(40, 200, 110) elseif v >= 30 then return Color3.fromRGB(240, 170, 30) end
+			return Color3.fromRGB(255, 80, 90)
+		end
+		local tAcc, frames = 0, 0
+		track(RS.Heartbeat:Connect(function(dt)
+			tAcc = tAcc + dt
+			frames = frames + 1
+			if tAcc < 0.25 then return end
+			local f = math.floor(frames / tAcc + 0.5)
+			table.remove(hist, 1)
+			table.insert(hist, f)
+			local mn, mx, sum, cnt = math.huge, 0, 0, 0
+			for _, v in ipairs(hist) do
+				if v > 0 then
+					mn = math.min(mn, v)
+					mx = math.max(mx, v)
+					sum = sum + v
+					cnt = cnt + 1
+				end
+			end
+			if cnt == 0 then mn = 0 end
+			local avg = cnt > 0 and math.floor(sum / cnt + 0.5) or 0
+			fpsNum.Text = f .. " FPS"
+			fpsNum.TextColor3 = colFor(f)
+			fpsStat.Text = "MIN " .. mn .. "   AVG " .. avg .. "   MAX " .. mx .. "   " .. string.format("%.1f", 1000 / math.max(f, 1)) .. " ms"
+			for i, bar in ipairs(bars) do
+				bar.Size = UDim2.new(1 / N, -2, math.clamp(hist[i] / 144, 0.04, 1), 0)
+				bar.BackgroundColor3 = colFor(hist[i])
+			end
+			tAcc, frames = 0, 0
+		end))
+	end
+
+	------------------------------------------------------------- SKY STYLES page
+	local function period(h)
+		if h < 5.5 or h >= 19.5 then return "Night" end
+		if h < 7.5 then return "Dawn" end
+		if h >= 16.5 then return "Dusk" end
+		return "Day"
+	end
+	local function hashOf(s)
+		local h = 7
+		for i = 1, #s do h = (h * 31 + string.byte(s, i)) % 100003 end
+		return h
+	end
+
+	-- draws a small picture of the sky style (or shows your uploaded cover image)
+	local function buildCover(parent, name)
+		for _, ch in ipairs(parent:GetChildren()) do
+			if ch:IsA("GuiObject") or ch:IsA("UIGradient") then ch:Destroy() end
+		end
+		local id = COVER_IDS[name]
+		if id and id ~= "" then
+			new("ImageLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "rbxassetid://" .. id, ScaleType = Enum.ScaleType.Crop }, parent)
+			return
+		end
 		local pr = SKY_PRESETS[name]
+		if not pr then return end
+		local hr = pr.hour or 12
+		local night = hr < 5.5 or hr >= 19.5
+		local twi = (not night) and (hr < 7.5 or hr >= 16.5)
+		local top, bot
+		if night then
+			top = pr.adec:Lerp(Color3.new(0, 0, 0), 0.55)
+			bot = pr.acol:Lerp(Color3.new(0, 0, 0), 0.45)
+		elseif twi then
+			top = pr.adec:Lerp(Color3.fromRGB(40, 40, 90), 0.5)
+			bot = pr.acol
+		else
+			top = pr.acol:Lerp(Color3.fromRGB(80, 130, 225), 0.3)
+			bot = pr.adec:Lerp(WHITE, 0.1)
+		end
+		parent.BackgroundColor3 = WHITE
+		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(top, bot) }, parent)
+		local rng = Random.new(hashOf(name))
+		local function box(x, y, w, h, c, tr, round)
+			local f = new("Frame", { Position = UDim2.fromScale(x, y), Size = UDim2.fromScale(w, h), BackgroundColor3 = c, BackgroundTransparency = tr or 0, BorderSizePixel = 0 }, parent)
+			if round then new("UICorner", { CornerRadius = UDim.new(0, 999) }, f) end
+			return f
+		end
+		-- soft colour clouds of gas on hazy nights (galaxy, nebula, neon...)
+		if night and pr.haze >= 0.8 then
+			box(rng:NextNumber(0, 0.3), rng:NextNumber(0, 0.2), 0.6, 0.8, pr.ccol, 0.82, true)
+			box(rng:NextNumber(0.4, 0.6), rng:NextNumber(0.1, 0.3), 0.5, 0.7, pr.acol, 0.84, true)
+		end
+		-- stars
+		if (night or twi) and pr.stars > 0 then
+			local n = math.floor(math.clamp(pr.stars / 330, 3, 18))
+			if not night then n = math.floor(n / 2) end
+			for _ = 1, n do
+				local sz = rng:NextInteger(1, 2)
+				local f = box(rng:NextNumber(0.03, 0.97), rng:NextNumber(0.04, 0.55), 0, 0, WHITE, rng:NextNumber(0, 0.5), true)
+				f.Size = UDim2.fromOffset(sz, sz)
+			end
+		end
+		if name == "Aurora" then
+			local a1 = box(0.05, 0.16, 0.9, 0.22, Color3.fromRGB(90, 255, 190), 0.55, true)
+			a1.Rotation = -8
+			new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.35), NumberSequenceKeypoint.new(1, 1) }) }, a1)
+			local a2 = box(0.15, 0.3, 0.7, 0.14, Color3.fromRGB(120, 200, 255), 0.7, true)
+			a2.Rotation = -6
+		end
+		-- moon at night, sun by day
+		local function disc(x, y, d, c, glow)
+			local g = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(x, y), Size = UDim2.fromOffset(d * glow, d * glow), BackgroundColor3 = c, BackgroundTransparency = 0.84, BorderSizePixel = 0 }, parent)
+			new("UICorner", { CornerRadius = UDim.new(0, 999) }, g)
+			local m = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(x, y), Size = UDim2.fromOffset(d, d), BackgroundColor3 = c, BorderSizePixel = 0 }, parent)
+			new("UICorner", { CornerRadius = UDim.new(0, 999) }, m)
+		end
+		if hr >= 18.5 or hr < 5.5 then
+			local d = math.clamp(10 + (pr.moon or 11) * 0.55, 14, 34)
+			disc(0.74, 0.24, d, (name == "Blood Moon") and Color3.fromRGB(220, 70, 60) or Color3.fromRGB(236, 240, 252), 2.2)
+		elseif hr >= 5.8 and hr < 18.2 then
+			local x = math.clamp((hr - 5) / 14, 0.1, 0.9)
+			local y = 0.64 - 0.46 * math.sin(math.clamp((hr - 6) / 12, 0, 1) * math.pi)
+			disc(x, y, 18, twi and Color3.fromRGB(255, 205, 130) or Color3.fromRGB(255, 246, 205), 2.6)
+		end
+		-- clouds
+		local puffs = math.floor(pr.cover * 4 + 0.5)
+		local ctr = 0.12 + (1 - pr.cdens) * 0.4
+		for i = 1, puffs do
+			local x = ((i - 1) / math.max(puffs, 1)) * 0.8 + rng:NextNumber(-0.02, 0.1)
+			local y = rng:NextNumber(0.28, 0.5)
+			box(x, y, 0.26, 0.07, pr.ccol, ctr, true)
+			box(x + 0.04, y - 0.045, 0.11, 0.08, pr.ccol, ctr, true)
+			box(x + 0.12, y - 0.06, 0.12, 0.09, pr.ccol, ctr, true)
+		end
+		if name == "Rainbow Day" then
+			local cl = { Color3.fromRGB(255, 80, 80), Color3.fromRGB(255, 170, 60), Color3.fromRGB(255, 235, 90), Color3.fromRGB(90, 210, 120), Color3.fromRGB(90, 150, 255) }
+			for i, c in ipairs(cl) do
+				local arc = new("Frame", { Position = UDim2.fromScale(0.1 + (i - 1) * 0.025, 0.3 + (i - 1) * 0.04), Size = UDim2.fromScale(0.8 - (i - 1) * 0.05, 1.2), BackgroundTransparency = 1, BorderSizePixel = 0 }, parent)
+				new("UICorner", { CornerRadius = UDim.new(0, 999) }, arc)
+				new("UIStroke", { Color = c, Thickness = 3, Transparency = 0.3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, arc)
+			end
+		end
+		if pr.haze >= 1.4 then
+			local hz = box(0, 0.5, 1, 0.35, pr.ccol, 0.4, false)
+			new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0.2) }) }, hz)
+		end
+		-- hills at the bottom
+		local hillT = night and 0.15 or 0.4
+		box(-0.15, 0.78, 0.75, 0.5, Color3.new(0, 0, 0), hillT + 0.1, true)
+		box(0.3, 0.84, 0.95, 0.5, Color3.new(0, 0, 0), hillT, true)
+	end
+
+	local cS1 = HOST.Column(SEC_SKY, 420)
+	local cS2 = HOST.Column(SEC_SKY, 300)
+	local cS3 = HOST.Column(SEC_SKY, 270)
+	cols[#cols + 1], cols[#cols + 2], cols[#cols + 3] = cS1, cS2, cS3
+	local stList = cS1.Card(nil, "SkyList")
+	local stDet = cS2.Card(nil, "SkyDetail")
+	local stAdj = cS3.Card(nil, "SkyAdjust")
+
+	local items = {}
+	local filter = "All"
+	local updateDetail
+
+	local function applySkyStyle(name)
+		local pr = SKY_PRESETS[name]
+		if not pr then return end
 		for k, v in pairs(pr) do
 			if k ~= "hour" then S[k] = v end
 		end
-		if pr.hour then
+		if pr.hour and matchTime then
 			S.time = pr.hour
 			S.timeLock = true
-			lockBtn.Text = "LOCK TIME: ON"
+			paintToggle("timeLock")
 		end
 		S.skyOn = true
 		refreshAll()
 		apply()
-	end)
-end
-local resetSkyBtn = button(skyGrid, "Reset sky", 0)
-resetSkyBtn.BackgroundColor3 = C.red
-resetSkyBtn.MouseButton1Click:Connect(function()
-	resetSky()
-	refreshAll()
-end)
-header(pSky, "ADJUST")
-local function skyOn() S.skyOn = true end
-slider(pSky, "stars", "Stars (night)", 0, 5000, skyOn)
-slider(pSky, "cover", "Cloud cover", 0, 1, skyOn)
-slider(pSky, "cdens", "Cloud thickness", 0, 1, skyOn)
-slider(pSky, "adens", "Sky haze density", 0, 0.7, skyOn)
-slider(pSky, "haze", "Horizon haze", 0, 4, skyOn)
-slider(pSky, "moon", "Moon size", 5, 40, skyOn)
-slider(pSky, "sun", "Sun size", 5, 60, skyOn)
-
------------------------------------------------------------------ SOUND tab
-local pSnd = pages.SOUND
-header(pSnd, "SOUND")
-local sndBtn = fullButton(pSnd, "SOUND: ON")
-sndBtn.MouseButton1Click:Connect(function()
-	S.sound = not S.sound
-	sndBtn.Text = "SOUND: " .. (S.sound and "ON" or "OFF")
-end)
-slider(pSnd, "vol", "Volume", 0, 1)
-
-local nameRow = new("TextLabel", {
-	Text = "Sound: none (pick one below)", Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, BackgroundColor3 = C.field,
-	BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 40), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-	LayoutOrder = nextOrder(pSnd),
-}, pSnd)
-new("UICorner", { CornerRadius = UDim.new(0, 8) }, nameRow)
-rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, nameRow), "Color")
-new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, nameRow)
-
-local soundStatus = new("TextLabel", {
-	Text = "Nothing plays until you pick a sound.", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub,
-	BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 22), TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = nextOrder(pSnd),
-}, pSnd)
-
--- sound list (only the names are shown). fade = quieter at night like real birds.
-local ENTRIES = {
-	{ id = AMBIENT_SOUND_ID, name = "Nature Birds", fade = true },
-	{ id = "113063653983791" }, { id = "120950818518974" }, { id = "115115619185822" },
-	{ id = "128645406929371" }, { id = "139132289200391" }, { id = "138890398994853" },
-	{ id = "140351878812590" }, { id = "136665072148354" }, { id = "81244860156643" }, { id = "85735197482652" },
-	{ id = "93810693712746" }, { id = "116586402120871" }, { id = "96727522170625" }, { id = "109545400120727" },
-	{ id = "86751112677010" }, { id = "1836406945" },
-}
-local curIdx, curFade = 0, false
-local rows = {}
-
-local function refreshRows()
-	for i, r in ipairs(rows) do
-		r.BackgroundColor3 = (i == curIdx) and C.field or C.btn
-		r.TextColor3 = (i == curIdx) and rgb or C.text
+		activeSky = name
+		repaintSky()
 	end
-end
+	local function resetSkyStyle()
+		resetSky()
+		refreshAll()
+		activeSky = nil
+		repaintSky()
+	end
 
-local function playEntry(i)
-	local e = ENTRIES[i]
-	if not e then return end
-	curIdx, curFade = i, e.fade == true
-	nameRow.Text = "Sound: " .. (e.name or "...")
-	snd.SoundId = "rbxassetid://" .. e.id
-	snd:Play()
-	soundStatus.Text = "Loading sound..."
-	refreshRows()
-	task.delay(6, function()
-		if snd.Parent and curIdx == i then
-			if snd.IsLoaded then
-				soundStatus.Text = e.fade and "Sound ready. Birds play in the morning/day, silent at night." or "Sound ready. Use the Volume slider."
-			else
-				soundStatus.Text = "This sound could not load. Pick another one."
+	-- list card: title, search, filters, grid of covers
+	local countLbl = txt(stList, "", 11, false, MUT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), Size = UDim2.fromOffset(120, 14), TextXAlignment = RIGHT })
+	txt(stList, "Sky styles", 14, true, TXT, { Position = UDim2.fromOffset(14, 11), Size = UDim2.new(1, -140, 0, 18) })
+	local search = new("TextBox", { Position = UDim2.fromOffset(12, 38), Size = UDim2.new(1, -24, 0, 32), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, Text = "", PlaceholderText = "Search sky styles", PlaceholderColor3 = MUT, TextColor3 = TXT, TextSize = 12, TextXAlignment = LEFT, ClearTextOnFocus = false }, stList)
+	styleText(search, false)
+	rc(search, 16)
+	line(search)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, search)
+
+	local filterRow = new("Frame", { Position = UDim2.fromOffset(12, 78), Size = UDim2.new(1, -24, 0, 26), BackgroundTransparency = 1 }, stList)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, filterRow)
+	local filterBtns = {}
+	local gridScroll = new("ScrollingFrame", { Position = UDim2.fromOffset(0, 112), Size = UDim2.new(1, 0, 1, -112), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, stList)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingBottom = UDim.new(0, 12), PaddingTop = UDim.new(0, 2) }, gridScroll)
+	new("UIGridLayout", { CellSize = UDim2.new(0.5, -5, 0, 110), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, gridScroll)
+	local emptyLbl = txt(stList, "No styles match.", 12, false, MUT, { Position = UDim2.new(0, 0, 0, 160), Size = UDim2.new(1, 0, 0, 20), TextXAlignment = CENTER, Visible = false })
+
+	local function refilter()
+		local q = string.lower(search.Text or "")
+		local n = 0
+		for _, name in ipairs(SKY_NAMES) do
+			local it = items[name]
+			local pr = SKY_PRESETS[name]
+			local tag = SKY_META[name][1]
+			local ok = true
+			if filter == "Day" then
+				ok = period(pr.hour) ~= "Night"
+			elseif filter == "Night" then
+				ok = period(pr.hour) == "Night"
+			elseif filter == "Dreamy" then
+				ok = (tag == "Soft" or tag == "Magic")
+			elseif filter == "Favorites" then
+				ok = prefs.favs[name] == true
 			end
+			if ok and q ~= "" then
+				ok = (string.find(string.lower(name), q, 1, true) ~= nil) or (string.find(string.lower(tag), q, 1, true) ~= nil)
+			end
+			it.cell.Visible = ok
+			if ok then n = n + 1 end
 		end
-	end)
-end
-
-header(pSnd, "SOUND LIST")
-for i, e in ipairs(ENTRIES) do
-	local r = button(pSnd, e.name or ("Sound " .. (i - 1)), nextOrder(pSnd))
-	r.Size = UDim2.new(1, 0, 0, 36)
-	r.TextXAlignment = Enum.TextXAlignment.Left
-	r.TextTruncate = Enum.TextTruncate.AtEnd
-	new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, r)
-	rows[i] = r
-	r.MouseButton1Click:Connect(function() playEntry(i) end)
-	if not e.name then
-		task.spawn(function()
-			local ok, info = pcall(function()
-				return game:GetService("MarketplaceService"):GetProductInfo(tonumber(e.id))
-			end)
-			e.name = (ok and info and info.Name) or ("Sound " .. (i - 1))
-			r.Text = e.name
-			if curIdx == i then nameRow.Text = "Sound: " .. e.name end
+		countLbl.Text = n .. (n == 1 and " style" or " styles")
+		emptyLbl.Visible = (n == 0)
+	end
+	local function paintFilters()
+		for name, b in pairs(filterBtns) do
+			local sel = (name == filter)
+			b.BackgroundTransparency = sel and 0 or 0.94
+			b.BackgroundColor3 = WHITE
+			b.TextColor3 = sel and INK or TXT
+		end
+	end
+	for i, name in ipairs({ "All", "Day", "Night", "Dreamy", "Favorites" }) do
+		local b = new("TextButton", { Text = name, TextSize = 11, AutoButtonColor = false, Size = UDim2.fromOffset(0, 26), AutomaticSize = Enum.AutomaticSize.X, BorderSizePixel = 0, LayoutOrder = i }, filterRow)
+		styleText(b, true)
+		rc(b, 13)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+		filterBtns[name] = b
+		b.Activated:Connect(function()
+			filter = name
+			paintFilters()
+			refilter()
 		end)
 	end
-end
-local stopRow = button(pSnd, "Stop sound", nextOrder(pSnd))
-stopRow.Size = UDim2.new(1, 0, 0, 36)
-stopRow.BackgroundColor3 = C.red
-stopRow.MouseButton1Click:Connect(function()
-	curIdx = 0
-	nameRow.Text = "Sound: none"
-	soundStatus.Text = "Sound stopped."
-	refreshRows()
-end)
+	paintFilters()
+	search:GetPropertyChangedSignal("Text"):Connect(refilter)
 
------------------------------------------------------------------ REALISTIC tab (high-end graphics card look)
-local vigGui = HOST.Gui
-pcall(function() vigGui.ScreenInsets = Enum.ScreenInsets.None end)
-local function vigFrame(size, pos, rot)
-	local f = new("Frame", { Size = size, Position = pos, BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, vigGui)
-	table.insert(vigGrads, new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new(1, 1) }, f))
-end
-vigFrame(UDim2.fromScale(1, 0.3), UDim2.fromScale(0, 0), 90)
-vigFrame(UDim2.fromScale(1, 0.3), UDim2.fromScale(0, 0.7), 270)
-vigFrame(UDim2.fromScale(0.22, 1), UDim2.fromScale(0, 0), 0)
-vigFrame(UDim2.fromScale(0.22, 1), UDim2.fromScale(0.78, 0), 180)
-dimFull = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0 }, vigGui)
-
-local pRT = pages.REALISTIC
-local RT_PRESETS = {
-	["Ultra Real"] = { bloom = 0.55, sat = 0.28, con = 0.22, rays = 0.3, exp = origE + 0.15, tint = Color3.fromRGB(255, 247, 236),
-		dof = 0.35, soft = 0.3, spec = 1, diff = 1, water = 0.75, vig = 0.35 },
-	["Soft Real"] = { bloom = 0.4, sat = 0.15, con = 0.12, rays = 0.2, exp = origE + 0.1, tint = Color3.fromRGB(255, 250, 244),
-		dof = 0.15, soft = 0.2, spec = 0.8, diff = 0.9, water = 0.5, vig = 0.2 },
-	["Cinematic"] = { bloom = 0.7, sat = -0.05, con = 0.28, rays = 0.15, exp = origE + 0.05, tint = Color3.fromRGB(255, 240, 225),
-		dof = 0.6, soft = 0.4, spec = 1, diff = 0.9, water = 0.7, vig = 0.55 },
-	["Sharp HD"] = { bloom = 0.25, sat = 0.2, con = 0.3, rays = 0.1, exp = origE, tint = Color3.new(1, 1, 1),
-		dof = 0, soft = 0.1, spec = 1, diff = 1, water = 0.6, vig = 0.1 },
-}
-header(pRT, "ONE TAP LOOK")
-local rtGrid = grid(pRT)
-for _, name in ipairs({ "Ultra Real", "Soft Real", "Cinematic", "Sharp HD" }) do
-	local b = button(rtGrid, name, 0)
-	b.MouseButton1Click:Connect(function()
-		for k, v in pairs(RT_PRESETS[name]) do S[k] = v end
-		S.lightOn, S.rtOn, S.waterOn = true, true, true
-		refreshAll()
-		apply()
-	end)
-end
-local rtReset = button(rtGrid, "Reset realistic", 0)
-rtReset.BackgroundColor3 = C.red
-rtReset.MouseButton1Click:Connect(function()
-	restoreRT()
-	refreshAll()
-	apply()
-end)
-header(pRT, "ADJUST")
-local function rtOn() S.rtOn = true end
-slider(pRT, "dof", "Depth of field (far blur)", 0, 1)
-slider(pRT, "soft", "Shadow softness", 0, 1, rtOn)
-slider(pRT, "spec", "Reflections", 0, 1, rtOn)
-slider(pRT, "diff", "Ambient light", 0, 1, rtOn)
-slider(pRT, "water", "Water shine", 0, 1, function() S.waterOn = true end)
-slider(pRT, "vig", "Vignette (dark edges)", 0, 1)
-slider(pRT, "dim", "Screen dark (covers whole screen)", 0, 1)
-slider(pRT, "fov", "Field of view", 40, 100, function() S.fovOn = true end)
-
------------------------------------------------------------------ STYLE tab (window colour + lock)
-local pStyle = pages.STYLE
-local C0 = {}
-for k, v in pairs(C) do C0[k] = v end
-local function mkPal(bg, bg2, panel, field, btn, text, sub)
-	local function c(t) return Color3.fromRGB(t[1], t[2], t[3]) end
-	return { bg = c(bg), bg2 = c(bg2), panel = c(panel), field = c(field), btn = c(btn), text = c(text), sub = c(sub), red = C0.red }
-end
-local PAL = {
-	Black = C0,
-	White = {
-		bg = Color3.fromRGB(246, 246, 251), bg2 = Color3.fromRGB(236, 232, 246), panel = Color3.fromRGB(230, 230, 239),
-		field = Color3.fromRGB(215, 215, 228), btn = Color3.fromRGB(203, 203, 219), text = Color3.fromRGB(18, 18, 26),
-		sub = Color3.fromRGB(92, 92, 112), red = C0.red,
-	},
-	Transparent = C0,
-	Ocean = mkPal({8,24,40},{14,40,62},{14,40,62},{22,62,92},{26,74,104},{225,245,255},{140,190,215}),
-	Purple = mkPal({24,10,40},{38,18,62},{38,18,62},{60,30,94},{74,38,116},{240,230,255},{185,160,220}),
-	Rose = mkPal({40,12,24},{62,20,38},{62,20,38},{94,32,58},{110,40,68},{255,235,242},{230,170,190}),
-	Emerald = mkPal({8,30,22},{14,48,36},{14,48,36},{22,74,56},{28,88,66},{225,255,240},{150,215,185}),
-	Sunset = mkPal({40,16,10},{62,26,16},{62,26,16},{96,44,26},{112,52,30},{255,240,228},{240,180,140}),
-	Gold = mkPal({30,24,6},{48,38,12},{48,38,12},{80,64,20},{96,76,24},{255,248,220},{230,200,130}),
-	Midnight = mkPal({6,8,30},{12,16,48},{12,16,48},{22,28,80},{28,36,96},{225,230,255},{150,160,215}),
-	["Mint Light"] = mkPal({240,252,246},{224,242,234},{224,242,234},{200,228,214},{190,220,204},{16,40,30},{70,110,90}),
-}
-local origs = {}
-local function keyOf(col)
-	for k, v in pairs(C0) do
-		if v == col then return k end
+	local function selectSky(name)
+		selectedSky = name
+		repaintSky()
 	end
-end
-local mainGrad = main:FindFirstChildOfClass("UIGradient")
-local function applyTheme(name)
-	local P = PAL[name]
-	for k, v in pairs(P) do C[k] = v end
-	local glass = (name == "Transparent")
-	for _, d in ipairs(main:GetDescendants()) do
-		if d:IsA("GuiObject") then
-			local o = origs[d]
-			if not o then
-				o = {
-					bg = d.BackgroundColor3, bt = d.BackgroundTransparency,
-					tc = (d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")) and d.TextColor3 or nil,
-				}
-				origs[d] = o
+	local function toggleFav(name)
+		if prefs.favs[name] then prefs.favs[name] = nil else prefs.favs[name] = true end
+		savePrefs()
+		repaintSky()
+		if filter == "Favorites" then refilter() end
+	end
+
+	for idx, name in ipairs(SKY_NAMES) do
+		local pr = SKY_PRESETS[name]
+		local cell = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = INK, BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = idx }, gridScroll)
+		rc(cell, 14)
+		local sk = line(cell, 0.9)
+		local cover = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, ClipsDescendants = true }, cell)
+		buildCover(cover, name)
+		local shade = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, cell)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0.2) }) }, shade)
+		txt(cell, name, 12, true, WHITE, { Position = UDim2.new(0, 10, 1, -36), Size = UDim2.new(1, -56, 0, 16) })
+		txt(cell, fmtHour(pr.hour) .. "  ·  " .. period(pr.hour), 10, false, Color3.fromRGB(210, 212, 222), { Position = UDim2.new(0, 10, 1, -19), Size = UDim2.new(1, -56, 0, 12) })
+		local play = new("TextButton", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -8, 1, -8), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = WHITE, Text = "▶", TextSize = 13, TextColor3 = INK, Font = Enum.Font.SourceSansBold, AutoButtonColor = false, BorderSizePixel = 0 }, cell)
+		rc(play, 14)
+		local heart = new("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 8), Size = UDim2.fromOffset(24, 24), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.55, Text = "♥", TextSize = 14, TextColor3 = WHITE, Font = Enum.Font.SourceSansBold, AutoButtonColor = false, BorderSizePixel = 0 }, cell)
+		rc(heart, 12)
+		local badge = txt(cell, "ACTIVE", 9, true, INK, { Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(46, 16), BackgroundTransparency = 0, BackgroundColor3 = GREEN, TextXAlignment = CENTER, Visible = false })
+		rc(badge, 8)
+		items[name] = { cell = cell, stroke = sk, heart = heart, badge = badge }
+		cell.Activated:Connect(function() selectSky(name) end)
+		play.Activated:Connect(function()
+			selectSky(name)
+			applySkyStyle(name)
+		end)
+		heart.Activated:Connect(function() toggleFav(name) end)
+	end
+
+	-- detail card (like the script page: cover, name, stats, tags, Apply)
+	local coverBig = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.new(1, -24, 0, 130), BackgroundColor3 = WHITE, BorderSizePixel = 0, ClipsDescendants = true }, stDet)
+	rc(coverBig, 14)
+	local dName = txt(stDet, "", 16, true, TXT, { Position = UDim2.fromOffset(14, 150), Size = UDim2.new(1, -28, 0, 20) })
+	local dSub = txt(stDet, "", 11, false, MUT, { Position = UDim2.fromOffset(14, 171), Size = UDim2.new(1, -28, 0, 14) })
+	local stats = {}
+	for i, lbl in ipairs({ "Hour", "Stars", "Clouds" }) do
+		local fr = new("Frame", { Position = UDim2.new((i - 1) / 3, 0, 0, 192), Size = UDim2.new(1 / 3, 0, 0, 38), BackgroundTransparency = 1 }, stDet)
+		stats[i] = txt(fr, "", 16, true, TXT, { Size = UDim2.new(1, 0, 0, 22), TextXAlignment = CENTER })
+		txt(fr, lbl, 10, false, MUT, { Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 12), TextXAlignment = CENTER })
+	end
+	local tagRow = new("Frame", { Position = UDim2.fromOffset(14, 236), Size = UDim2.new(1, -28, 0, 22), BackgroundTransparency = 1 }, stDet)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, tagRow)
+	local dDesc = txt(stDet, "", 11, false, MUT, { Position = UDim2.fromOffset(14, 266), Size = UDim2.new(1, -28, 0, 48), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+	local applyBtn = new("TextButton", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.fromOffset(160, 38), BackgroundColor3 = WHITE, Text = "Apply style", TextSize = 13, TextColor3 = INK, AutoButtonColor = false, BorderSizePixel = 0 }, stDet)
+	styleText(applyBtn, true)
+	rc(applyBtn, 19)
+	local resetBtn = new("TextButton", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 180, 1, -12), Size = UDim2.fromOffset(62, 38), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, Text = "Reset", TextSize = 12, TextColor3 = TXT, AutoButtonColor = false, BorderSizePixel = 0 }, stDet)
+	styleText(resetBtn, true)
+	rc(resetBtn, 19)
+	line(resetBtn)
+	local dHeart = new("TextButton", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 250, 1, -12), Size = UDim2.fromOffset(38, 38), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, Text = "♥", TextSize = 18, TextColor3 = WHITE, Font = Enum.Font.SourceSansBold, AutoButtonColor = false, BorderSizePixel = 0 }, stDet)
+	rc(dHeart, 19)
+	line(dHeart)
+	applyBtn.Activated:Connect(function() applySkyStyle(selectedSky) end)
+	resetBtn.Activated:Connect(resetSkyStyle)
+	dHeart.Activated:Connect(function() toggleFav(selectedSky) end)
+
+	local shownCover = nil
+	updateDetail = function()
+		local name = selectedSky
+		local pr = SKY_PRESETS[name]
+		if not pr then return end
+		if shownCover ~= name then
+			shownCover = name
+			buildCover(coverBig, name)
+			for _, ch in ipairs(tagRow:GetChildren()) do
+				if ch:IsA("GuiObject") then ch:Destroy() end
 			end
-			local kb = keyOf(o.bg)
-			if kb then d.BackgroundColor3 = P[kb] end
-			if o.bt < 1 then d.BackgroundTransparency = glass and math.clamp(o.bt + 0.55, 0, 0.9) or o.bt end
-			if o.tc then
-				local kt = keyOf(o.tc)
-				if kt then d.TextColor3 = P[kt] end
+			local tags = { period(pr.hour), SKY_META[name][1], "#" .. string.lower((string.gsub(name, "%s", ""))) }
+			for i, t in ipairs(tags) do
+				local p = new("TextLabel", { Text = t, TextSize = 10, TextColor3 = TXT, BackgroundColor3 = (i == 1) and ACC or WHITE, BackgroundTransparency = (i == 1) and 0.7 or 0.9, Size = UDim2.fromOffset(0, 22), AutomaticSize = Enum.AutomaticSize.X, BorderSizePixel = 0, LayoutOrder = i }, tagRow)
+				styleText(p, true)
+				rc(p, 11)
+				new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, p)
 			end
 		end
+		dName.Text = name
+		dSub.Text = "Sky style  ·  " .. SKY_META[name][1]
+		stats[1].Text = fmtHour(pr.hour)
+		stats[2].Text = tostring(pr.stars)
+		stats[3].Text = math.floor(pr.cover * 100 + 0.5) .. "%"
+		dDesc.Text = SKY_META[name][2]
+		applyBtn.Text = (activeSky == name) and "Applied" or "Apply style"
+		local fav = prefs.favs[name] == true
+		dHeart.TextColor3 = fav and ACC or WHITE
 	end
-	if mainGrad then
-		mainGrad.Color = ColorSequence.new(P.bg2, P.bg)
-		mainGrad.Transparency = NumberSequence.new(glass and 0.6 or 0)
+
+	repaintSky = function()
+		for name, it in pairs(items) do
+			local act = (name == activeSky)
+			local sel = (name == selectedSky)
+			it.stroke.Color = act and GREEN or (sel and ACC or WHITE)
+			it.stroke.Transparency = act and 0.15 or (sel and 0.1 or 0.9)
+			it.stroke.Thickness = (act or sel) and 2 or 1
+			it.badge.Visible = act
+			local fav = prefs.favs[name] == true
+			it.heart.TextColor3 = fav and ACC or WHITE
+			it.heart.TextTransparency = fav and 0 or 0.3
+		end
+		updateDetail()
 	end
-	lockPill.BackgroundColor3 = winLocked and C.red or C.btn
-	lockPill.TextColor3 = C.text
-end
-
-header(pStyle, "WINDOW COLOUR")
-local themeGrid = grid(pStyle)
-for _, name in ipairs({ "Black", "White", "Transparent", "Ocean", "Purple", "Rose", "Emerald", "Sunset", "Gold", "Midnight", "Mint Light" }) do
-	local b = button(themeGrid, name, 0)
-	b.MouseButton1Click:Connect(function() applyTheme(name) end)
-end
-header(pStyle, "WINDOW")
-lockBtn2 = fullButton(pStyle, "LOCK WINDOW: OFF")
-lockBtn2.MouseButton1Click:Connect(function() setLock(not winLocked) end)
-local lockNote = new("TextLabel", {
-	Text = "Lock stops the window from moving, so you do not drag it by accident. LOCK TIME (TIME tab) keeps the game time fixed.",
-	Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, BackgroundTransparency = 1, TextWrapped = true,
-	Size = UDim2.new(1, 0, 0, 44), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-	LayoutOrder = nextOrder(pStyle),
-}, pStyle)
-
------------------------------------------------------------------ CONTACT tab
-local pContact = pages.CONTACT
-header(pContact, "CONTACT")
-local contactNote = new("TextLabel", {
-	Text = "Found a mistake, or is something missing in this script? Please contact me and I will fix it as soon as I can. Suggestions are welcome too. Thanks for using Known GFX!",
-	Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.text, BackgroundTransparency = 1, TextWrapped = true,
-	Size = UDim2.new(1, 0, 0, 74), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-	LayoutOrder = nextOrder(pContact),
-}, pContact)
-local contactStatus
-local function contactRow(title, value)
-	local row = new("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = C.field, BorderSizePixel = 0, LayoutOrder = nextOrder(pContact) }, pContact)
-	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
-	rgbify(new("UIStroke", { Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row), "Color")
-	new("TextLabel", {
-		Text = title, Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = C.sub, BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -110, 0, 14), TextXAlignment = Enum.TextXAlignment.Left,
-	}, row)
-	new("TextLabel", {
-		Text = value, Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = C.text, BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(14, 26), Size = UDim2.new(1, -110, 0, 24), TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-	}, row)
-	local cb = button(row, "COPY", 0)
-	cb.AnchorPoint = Vector2.new(1, 0.5)
-	cb.Position = UDim2.new(1, -10, 0.5, 0)
-	cb.Size = UDim2.fromOffset(70, 32)
-	cb.MouseButton1Click:Connect(function()
-		local sc = setclipboard or toclipboard
-		if sc then
-			pcall(sc, value)
-			contactStatus.Text = "Copied: " .. value
-		else
-			contactStatus.Text = "Copy not supported here. Username: " .. value
-		end
-	end)
-end
-contactRow("DISCORD", "Hot_sasur_kai")
-contactRow("ROBLOX USERNAME", "yorichii_566")
-contactStatus = new("TextLabel", {
-	Text = "", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = nextOrder(pContact),
-}, pContact)
-
------------------------------------------------------------------ FPS tab (live meter, frame limit, boost)
-local pFps = pages.FPS
-local capFn = setfpscap or set_fps_cap
-
-local fpsBox = new("Frame", { Size = UDim2.new(1, 0, 0, 100), BackgroundColor3 = C.field, BorderSizePixel = 0, LayoutOrder = nextOrder(pFps) }, pFps)
-new("UICorner", { CornerRadius = UDim.new(0, 10) }, fpsBox)
-rgbify(new("UIStroke", { Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, fpsBox), "Color")
-local fpsNum = new("TextLabel", {
-	Text = "-- FPS", Font = Enum.Font.GothamBold, TextSize = 28, TextColor3 = C.text, BackgroundTransparency = 1,
-	Position = UDim2.fromOffset(14, 6), Size = UDim2.fromOffset(220, 36), TextXAlignment = Enum.TextXAlignment.Left,
-}, fpsBox)
-local fpsStat = new("TextLabel", {
-	Text = "", Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = C.sub, BackgroundTransparency = 1,
-	Position = UDim2.fromOffset(14, 42), Size = UDim2.new(1, -28, 0, 16), TextXAlignment = Enum.TextXAlignment.Left,
-}, fpsBox)
-local graphBox = new("Frame", { Position = UDim2.fromOffset(12, 64), Size = UDim2.new(1, -24, 0, 28), BackgroundTransparency = 1, ClipsDescendants = true }, fpsBox)
-local N = 40
-local bars, hist = {}, {}
-for i = 1, N do
-	hist[i] = 0
-	local b = Instance.new("Frame")
-	b.BorderSizePixel = 0; b.AnchorPoint = Vector2.new(0, 1)
-	b.Position = UDim2.new((i - 1) / N, 1, 1, 0); b.Size = UDim2.new(1 / N, -2, 0, 2)
-	b.BackgroundColor3 = C.red; b.Parent = graphBox
-	bars[i] = b
-end
-
-local function colFor(v)
-	if v >= 55 then return Color3.fromRGB(40, 200, 110) elseif v >= 30 then return Color3.fromRGB(240, 170, 30) end
-	return Color3.fromRGB(255, 80, 90)
-end
-
-local capStatus = new("TextLabel", {
-	Text = "", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, BackgroundTransparency = 1, TextWrapped = true,
-	Size = UDim2.new(1, 0, 0, 30), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-	LayoutOrder = nextOrder(pFps),
-}, pFps)
-header(pFps, "FRAME LIMIT (needs executor with setfpscap)")
-local function setCap(n)
-	if not capFn then
-		capStatus.Text = "Executor mein setfpscap nahi hai, isliye limit set nahi ho sakti. Boost phir bhi kaam karega."
-		return
+	accHooks[#accHooks + 1] = function()
+		shownCover = nil
+		repaintSky()
 	end
-	local ok, err = pcall(capFn, n)
-	capStatus.Text = ok and ("Limit: " .. (n == 0 and "Unlimited" or (n .. " FPS"))) or ("Limit set nahi hui: " .. tostring(err))
-end
-local capGrid = grid(pFps)
-for _, n in ipairs({ 30, 45, 60, 90, 120, 144, 240, 0 }) do
-	button(capGrid, n == 0 and "UNLIMITED" or (n .. " FPS"), function() setCap(n) end)
-end
 
-header(pFps, "BOOST (more FPS, less graphics)")
-local function setParticles(on)
-	pcall(function()
-		for _, d in ipairs(workspace:GetDescendants()) do
-			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
-				if on then
-					if d.Enabled then fxSaved[d] = true; d.Enabled = false end
-				elseif fxSaved[d] and d.Parent then
-					d.Enabled = true
-				end
-			end
-		end
-	end)
-	if not on then fxSaved = {} end
-end
-local shBtn = fullButton(pFps, "SHADOWS OFF: OFF")
-shBtn.MouseButton1Click:Connect(function()
-	BST.shadows = not BST.shadows
-	if BST.shadows then pcall(function() Lighting.GlobalShadows = false end)
-	else pcall(function() Lighting.GlobalShadows = OR.gs end) end
-	shBtn.Text = "SHADOWS OFF: " .. (BST.shadows and "ON" or "OFF")
-end)
-local fxBtn = fullButton(pFps, "GLOW + SUN RAYS OFF: OFF")
-fxBtn.MouseButton1Click:Connect(function()
-	BST.fx = not BST.fx
-	fxBtn.Text = "GLOW + SUN RAYS OFF: " .. (BST.fx and "ON" or "OFF")
-	apply()
-end)
-local ptBtn = fullButton(pFps, "PARTICLES OFF: OFF")
-ptBtn.MouseButton1Click:Connect(function()
-	BST.particles = not BST.particles
-	setParticles(BST.particles)
-	ptBtn.Text = "PARTICLES OFF: " .. (BST.particles and "ON" or "OFF")
-end)
-local fpsReset = fullButton(pFps, "RESET FPS SETTINGS")
-fpsReset.BackgroundColor3 = C.red
-fpsReset.MouseButton1Click:Connect(function()
-	BST.shadows, BST.fx, BST.particles = false, false, false
-	pcall(function() Lighting.GlobalShadows = OR.gs end)
-	setParticles(false)
-	shBtn.Text = "SHADOWS OFF: OFF"
-	fxBtn.Text = "GLOW + SUN RAYS OFF: OFF"
-	ptBtn.Text = "PARTICLES OFF: OFF"
-	setCap(0)
-	apply()
-end)
-
--- live meter: samples every 0.25 s, last 10 seconds in the graph
-local acc, frames = 0, 0
-RS.Heartbeat:Connect(function(dt)
-	acc = acc + dt
-	frames = frames + 1
-	if acc >= 0.25 then
-		local f = math.floor(frames / acc + 0.5)
-		table.remove(hist, 1)
-		table.insert(hist, f)
-		local mn, mx, sum, cnt = math.huge, 0, 0, 0
-		for _, v in ipairs(hist) do
-			if v > 0 then mn = math.min(mn, v); mx = math.max(mx, v); sum = sum + v; cnt = cnt + 1 end
-		end
-		if cnt == 0 then mn = 0 end
-		local avg = cnt > 0 and math.floor(sum / cnt + 0.5) or 0
-		fpsNum.Text = f .. " FPS"
-		fpsNum.TextColor3 = colFor(f)
-		fpsStat.Text = "MIN " .. mn .. "   AVG " .. avg .. "   MAX " .. mx .. "   " .. string.format("%.1f", 1000 / math.max(f, 1)) .. " ms"
-		for i, b in ipairs(bars) do
-			b.Size = UDim2.new(1 / N, -2, 0, math.max(2, math.clamp(hist[i] / 144, 0, 1) * 26))
-			b.BackgroundColor3 = colFor(hist[i])
-		end
-		acc, frames = 0, 0
+	-- adjust card
+	do
+		txt(stAdj, "Adjust", 16, true, TXT, { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20) })
+		txt(stAdj, "Fine tune the sky yourself", 11, false, MUT, { Position = UDim2.fromOffset(16, 33), Size = UDim2.new(1, -32, 0, 14) })
+		local h2 = new("Frame", { Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 1, -56), BackgroundTransparency = 1 }, stAdj)
+		local b = makeBody(h2)
+		b.Visible = true
+		toggleRow(b, "matchTime", "Match time of day", "A style also sets the hour it was made for.")
+		local function skyOn() S.skyOn = true end
+		makeSlider(b, "stars", "Stars (night)", 0, 5000, skyOn)
+		makeSlider(b, "cover", "Cloud cover", 0, 1, skyOn)
+		makeSlider(b, "cdens", "Cloud thickness", 0, 1, skyOn)
+		makeSlider(b, "adens", "Sky haze density", 0, 0.7, skyOn)
+		makeSlider(b, "haze", "Horizon haze", 0, 4, skyOn)
+		makeSlider(b, "moon", "Moon size", 5, 40, skyOn)
+		makeSlider(b, "sun", "Sun size", 5, 60, skyOn)
+		wideChip(b, "Reset sky", resetSkyStyle, ACC)
 	end
-end)
 
------------------------------------------------------------------ reset all
-resetAll.MouseButton1Click:Connect(function()
-	S.dim = 0
-	S.bloom, S.sat, S.con, S.rays = 0, 0, 0, 0
-	S.tint = Color3.new(1, 1, 1)
-	S.bright, S.exp = origB, origE
-	S.lightOn, S.timeLock = false, false
-	Lighting.Brightness = origB
-	Lighting.ExposureCompensation = origE
-	lockBtn.Text = "LOCK TIME: OFF"
-	resetSky()
-	restoreRT()
-	refreshAll()
-	apply()
-end)
+	refilter()
+	repaintSky()
+	HOST.Relayout()
+end)()
+
 
 ----------------------------------------------------------------- loops
--- RGB colour cycle
-local hue = 0
-track(RS.Heartbeat:Connect(function(dt)
-	hue = (hue + dt * 0.12) % 1
-	rgb = Color3.fromRGB(220, 38, 65)
-	for _, o in ipairs(rgbObjs) do o[1][o[2]] = rgb end
-	local c2 = Color3.fromHSV((hue + 0.5) % 1, 1, 0.15)
-	local seq = ColorSequence.new({ ColorSequenceKeypoint.new(0, rgb), ColorSequenceKeypoint.new(0.5, c2), ColorSequenceKeypoint.new(1, rgb) })
-	for _, gr in ipairs(spinners) do
-		gr.Color = seq
-		gr.Rotation = (gr.Rotation + dt * 120) % 360
-	end
-	local ab = activeTab and tabBtns[activeTab]
-	if ab then ab.TextColor3 = rgb end
-end))
-
 -- lighting / sky / sound
 local cur = 0
 local skyT = 0
@@ -5403,25 +5719,6 @@ track(RS.Heartbeat:Connect(function(dt)
 	end
 end))
 
------------------------------------------------------------------ drag by title bar
-do
-	local dragging, dragStart, startPos
-	bar.InputBegan:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			if not winLocked then dragging, dragStart, startPos = true, i.Position, main.Position end
-		end
-	end)
-	track(UIS.InputChanged:Connect(function(i)
-		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-			local d = i.Position - dragStart
-			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-		end
-	end))
-	track(UIS.InputEnded:Connect(function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
-	end))
-end
-
 -- clean everything up if the GUI is destroyed (e.g. script re-run)
 gui.Destroying:Connect(function()
 	for _, c in ipairs(conns) do c:Disconnect() end
@@ -5435,7 +5732,6 @@ gui.Destroying:Connect(function()
 	Lighting.ExposureCompensation = origE
 end)
 
-selectTab("SKY")
 apply()
 
 ----------------------------------------------------------------- galaxy loading screen (3.5 s) + chat message
@@ -5560,58 +5856,6 @@ do
 end
 
 
--- ===== NOVOLINE SHEET: lay the graphics settings out as cards on the sliding sheet =====
-;(function()
-	if not HOST.Column then return end
-	local SEC = 2
-
-	-- the old window stays only as an empty, invisible holder
-	pcall(function()
-		main.BackgroundTransparency = 1
-		main.ClipsDescendants = false
-		main.Size = UDim2.fromOffset(2, 2)
-		for _, ch in ipairs(main:GetChildren()) do
-			if ch:IsA("UIStroke") or ch:IsA("UIGradient") then ch.Enabled = false end
-		end
-		bar.Visible = false
-		side.Visible = false
-	end)
-	pcall(function() rail.Visible = false end)
-	pcall(function() lockBtn2.Visible = false end)
-
-	-- first card: name + reset
-	local c0 = HOST.Column(SEC, 240)
-	local st0 = c0.Card(128, "GfxTitle")
-	title.Parent = st0
-	title.Position = UDim2.fromOffset(18, 14)
-	title.Size = UDim2.new(1, -36, 0, 30)
-	resetAll.Parent = st0
-	resetAll.Position = UDim2.new(0, 14, 1, -52)
-	resetAll.Size = UDim2.new(1, -28, 0, 38)
-
-	-- one card per settings page
-	for _, name in ipairs({ "FPS", "SOUND", "CONTACT" }) do
-		local dead = pages[name]
-		if dead then pcall(function() dead.Visible = false end) end
-	end
-	for _, name in ipairs({ "GRAPHICS", "REALISTIC", "SKY", "TIME", "STYLE" }) do
-		local pg = pages[name]
-		if pg then
-			local c = HOST.Column(SEC, 340)
-			local st = c.Card(nil, "Gfx" .. name)
-			pg.Parent = st
-			pg.Position = UDim2.new()
-			pg.Size = UDim2.fromScale(1, 1)
-			pg.BackgroundTransparency = 1
-			pg.Visible = true
-			for _, ch in ipairs(pg:GetChildren()) do
-				if ch:IsA("UIStroke") then ch.Enabled = false end
-			end
-		end
-	end
-
-	HOST.Relayout()
-end)()
 end)
 
 -- Unified host cleanup handle.
