@@ -35,15 +35,15 @@ local NOVO = {
     red = Color3.fromRGB(220, 38, 65),
 }
 
-local function montserrat(weight)
+local function montserrat(weightName)
     local ok, face = pcall(function()
-        return Font.new("rbxasset://fonts/families/Montserrat.json", weight)
+        return Font.new("rbxasset://fonts/families/Montserrat.json", Enum.FontWeight[weightName])
     end)
-    if ok then return face end
+    if ok and face then return face end
     return nil
 end
-local FACE_BOLD = montserrat(Enum.FontWeight.Bold)
-local FACE_MED = montserrat(Enum.FontWeight.Medium)
+local FACE_BOLD = montserrat("Bold")
+local FACE_MED = montserrat("Medium")
 
 local function styleText(label, bold)
     local face = bold and FACE_BOLD or FACE_MED
@@ -68,9 +68,9 @@ HOST.Sheet = Instance.new("Frame")
 HOST.Sheet.Name = "NovolineSheet"
 HOST.Sheet.BackgroundTransparency = 1
 HOST.Sheet.BorderSizePixel = 0
-HOST.Sheet.Position = UDim2.fromScale(5, 0)
+HOST.Sheet.Position = UDim2.fromScale(0, 0)
 HOST.Sheet.Size = UDim2.fromScale(1, 1)
-HOST.Sheet.Visible = true
+HOST.Sheet.Visible = false
 HOST.Sheet.Parent = HOST.Gui
 
 local function makeSlot(name)
@@ -259,15 +259,52 @@ Toggle.Activated:Connect(function()
     HOST.SetVisible(not visible)
 end)
 
+function HOST.Report(name, err)
+    local msg = "[NOVOLINE] " .. tostring(name) .. " failed to load:\n" .. tostring(err)
+    pcall(function() warn(msg) end)
+    pcall(function()
+        local box = Instance.new("TextButton")
+        box.Name = "NovolineError_" .. tostring(name)
+        box.AutoButtonColor = false
+        box.BackgroundColor3 = Color3.fromRGB(40, 10, 14)
+        box.BackgroundTransparency = 0.1
+        box.BorderSizePixel = 0
+        box.Position = UDim2.fromOffset(34, 84 + (HOST.ErrCount or 0) * 130)
+        box.Size = UDim2.fromOffset(460, 122)
+        box.Text = string.sub(msg, 1, 420)
+        box.TextSize = 11
+        box.Font = Enum.Font.Code
+        box.TextColor3 = Color3.fromRGB(255, 200, 205)
+        box.TextWrapped = true
+        box.TextXAlignment = Enum.TextXAlignment.Left
+        box.TextYAlignment = Enum.TextYAlignment.Top
+        box.ZIndex = 900
+        box.Parent = HOST.Gui
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 12)
+        local pad = Instance.new("UIPadding", box)
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.PaddingTop = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 10)
+        box.Activated:Connect(function() box:Destroy() end)
+        HOST.ErrCount = (HOST.ErrCount or 0) + 1
+    end)
+end
+
+function HOST.Run(name, fn)
+    local ok, err = xpcall(fn, function(e)
+        return tostring(e) .. "\n" .. tostring(debug.traceback())
+    end)
+    if not ok then HOST.Report(name, err) end
+end
+
 function HOST.Start()
-    HOST.Sheet.Position = UDim2.fromScale(0, 0)
+    HOST.Sheet.Visible = true
     HOST.SetPage(1)
 end
 
 
-
 --==================== ORIGINAL SAIKIRECHAT MODULE ====================
-do
+HOST.Run("Chat", function()
 --[[
 	SAIKI RECHAT V2.8 (client-side, Luau / executor)
 	V2.3 adds: new DM homepage (Recent / In Server / Search), local DM history cache,
@@ -6024,10 +6061,10 @@ end)()
 	end)
 end)()
 
-end
+end)
 
 --==================== ORIGINAL SAIKI MUSIC MODULE ====================
-do
+HOST.Run("Music", function()
 --[[
     ╔══════════════════════════════════════════════════════════╗
     ║                    SAIKI MUSIC                           ║
@@ -10757,10 +10794,10 @@ for _, category in ipairs(
     )
 end
 
-end
+end)
 
 --==================== ORIGINAL KNOWN GFX MODULE ====================
-do
+HOST.Run("Graphics", function()
 --// Known GFX v10 (client-side) //--
 -- Black rectangular panel with RGB accents and tabs: SKY / TIME / SOUND / STYLE / CONTACT.
 -- Only YOU see these changes.
@@ -12117,7 +12154,7 @@ do
 	end))
 end
 
-end
+end)
 
 -- Unified host cleanup handle.
 HOST.Start()
