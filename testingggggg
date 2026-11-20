@@ -428,6 +428,297 @@ function HOST.Start()
 end
 
 
+--==================== SAIKI COMMANDS MODULE ====================
+-- The first page of the sheet: a command bar, a tap-to-run command list and an output box.
+-- It is its own module, so it never depends on the chat loading.
+HOST.Run("Commands", function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local HttpService = game:GetService("HttpService")
+	local TeleportService = game:GetService("TeleportService")
+	local StatsService = game:GetService("Stats")
+	local LP = Players.LocalPlayer
+	local REQUEST = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
+	local genv = (getgenv and getgenv()) or _G
+	if genv.SaikiCommands then pcall(genv.SaikiCommands.Destroy) end
+
+	local WHITE = Color3.new(1, 1, 1)
+	local T = {
+		text = SAIKIUI.text, mut = SAIKIUI.mut,
+		accA = Color3.fromRGB(220, 38, 65), accB = Color3.fromRGB(190, 194, 202),
+		font = Enum.Font.GothamMedium, fontB = Enum.Font.GothamBold,
+	}
+	local alive = true
+	local conns = {}
+	local function bind(sig, fn) local c = sig:Connect(fn); conns[#conns + 1] = c; return c end
+	local function new(class, props, kids)
+		local o = Instance.new(class)
+		local parent
+		for k, v in pairs(props or {}) do
+			if k == "Parent" then parent = v else o[k] = v end
+		end
+		for _, c in ipairs(kids or {}) do c.Parent = o end
+		if parent then o.Parent = parent end
+		return o
+	end
+	local function corner(r) return new("UICorner", { CornerRadius = UDim.new(0, r) }) end
+	local function stroke(t, th)
+		return new("UIStroke", { Color = WHITE, Transparency = t or 0.86, Thickness = th or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+	end
+	local function grad(rot) return new("UIGradient", { Color = ColorSequence.new(T.accA, T.accB), Rotation = rot or 25 }) end
+
+	local COMMANDS, ALIASES, ORDER = {}, {}, {}
+	local lastLine
+	local function reg(name, desc, fn, aliases)
+		COMMANDS[name] = { desc = desc, fn = fn }
+		ORDER[#ORDER + 1] = name
+		for _, a in ipairs(aliases or {}) do ALIASES[a] = name end
+	end
+	local function copy(text)
+		local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
+		if not fn then return false end
+		return (pcall(fn, text))
+	end
+	local function hasServer(view)
+		if game.JobId == "" then view.notice("No server id here (Studio)."); return false end
+		return true
+	end
+
+	-- public server list: "Asc" = fewest players first, "Desc" = most players first (full servers left out)
+	local function fetchServers(order)
+		if not REQUEST then return nil, "No HTTP function found." end
+		local ok, res = pcall(REQUEST, { Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%s&excludeFullGames=true&limit=100"):format(game.PlaceId, order), Method = "GET" })
+		if not ok or type(res) ~= "table" or type(res.Body) ~= "string" then return nil, "Could not reach the server list." end
+		local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+		if not ok2 or type(data) ~= "table" or type(data.data) ~= "table" then return nil, "Server list unavailable, try again." end
+		local out = {}
+		for _, s in ipairs(data.data) do
+			if s.id ~= game.JobId and (s.playing or 0) < (s.maxPlayers or 0) then out[#out + 1] = s end
+		end
+		return out
+	end
+	local function hop(view, mode)
+		view.notice("Looking for a server...")
+		task.spawn(function()
+			local list, err = fetchServers(mode == "most" and "Desc" or "Asc")
+			if not list then view.notice(err); return end
+			if #list == 0 then view.notice("No other open servers found."); return end
+			local pick = (mode == "random") and list[math.random(#list)] or list[1]
+			view.notice(("Joining a server with %d/%d players..."):format(pick.playing or 0, pick.maxPlayers or 0))
+			if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, LP) end) then view.notice("Teleport failed.") end
+		end)
+	end
+
+	reg("rejoin", "Rejoin this server", function(view)
+		view.notice("Rejoining...")
+		local ok
+		if game.JobId ~= "" then
+			ok = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end)
+		else
+			ok = pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
+		end
+		if not ok then view.notice("Teleport failed.") end
+	end, { "rj" })
+	reg("serverhop", "Hop to a random other server", function(view) hop(view, "random") end, { "hop", "sh" })
+	reg("shmost", "Hop to the server with the most players", function(view) hop(view, "most") end)
+	reg("shlowest", "Hop to the server with the fewest players", function(view) hop(view, "fewest") end, { "shfewest" })
+	reg("jobid", "Copy a join link for this server", function(view)
+		if not hasServer(view) then return end
+		local link = ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
+		view.notice(copy(link) and "Join link copied." or ("Job ID: " .. game.JobId))
+	end, { "joinlink" })
+	reg("join", "Join a server by Job ID: ;join <jobid>", function(view, args)
+		local id = args[1]
+		if not id then view.notice("Usage: ;join <jobid>"); return end
+		view.notice("Joining...")
+		if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LP) end) then view.notice("Teleport failed.") end
+	end)
+	COMMANDS.join.arg = true -- tapping it in the list fills the input instead of running
+	reg("serverinfo", "Show players, server age and ids", function(view)
+		local age = math.floor(workspace.DistributedGameTime)
+		view.notice(("Players %d/%d  |  up %dh %dm"):format(#Players:GetPlayers(), Players.MaxPlayers, age // 3600, (age % 3600) // 60))
+		view.notice("Place " .. tostring(game.PlaceId) .. "  |  Job " .. (game.JobId ~= "" and game.JobId or "studio"))
+	end, { "info" })
+	reg("ping", "Show your ping", function(view)
+		local ok, v = pcall(function() return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+		view.notice(ok and ("Ping: " .. math.floor(v + 0.5) .. " ms") or "Ping is not available here.")
+	end)
+	reg("fps", "Show your framerate", function(view)
+		task.spawn(function()
+			local frames, t0 = 0, os.clock()
+			while os.clock() - t0 < 0.6 do RunService.RenderStepped:Wait(); frames += 1 end
+			view.notice(("FPS: %d"):format(math.floor(frames / (os.clock() - t0) + 0.5)))
+		end)
+	end)
+	local function myPos()
+		local ch = LP.Character
+		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+		return hrp and hrp.Position or nil
+	end
+	reg("pos", "Show your position", function(view)
+		local p = myPos()
+		view.notice(p and ("Position: %.1f, %.1f, %.1f"):format(p.X, p.Y, p.Z) or "No character yet.")
+	end, { "position" })
+	reg("copycoords", "Copy your position (x, y, z)", function(view)
+		local p = myPos()
+		if not p then view.notice("No character yet."); return end
+		view.notice(copy(("%.2f, %.2f, %.2f"):format(p.X, p.Y, p.Z)) and "Coordinates copied." or "Clipboard not available.")
+	end, { "cc" })
+	local afkConn
+	reg("antiafk", "Stop the idle kick", function(view)
+		if afkConn then view.notice("Anti-AFK is already on."); return end
+		afkConn = LP.Idled:Connect(function()
+			pcall(function()
+				local vu = game:GetService("VirtualUser")
+				vu:CaptureController()
+				vu:ClickButton2(Vector2.new())
+			end)
+		end)
+		conns[#conns + 1] = afkConn
+		view.notice("Anti-AFK on.")
+	end)
+	reg("unantiafk", "Turn anti-AFK off", function(view)
+		if not afkConn then view.notice("Anti-AFK is not on."); return end
+		afkConn:Disconnect(); afkConn = nil
+		view.notice("Anti-AFK off.")
+	end)
+	reg("help", "List commands, or ;help <command>", function(view, args)
+		local q = args[1] and args[1]:lower()
+		if q then
+			q = ALIASES[q] or q
+			local c = COMMANDS[q]
+			view.notice(c and (";" .. q .. " - " .. c.desc) or ("No command called " .. q))
+			return
+		end
+		view.notice("Commands (;help <name> for details):")
+		local line = ""
+		for _, n in ipairs(ORDER) do
+			if #line + #n > 44 then view.notice(line); line = "" end
+			line = line .. ";" .. n .. "  "
+		end
+		if line ~= "" then view.notice(line) end
+		view.notice(";r repeats your last command")
+	end, { "cmds", "commands" })
+
+	local cmdRun
+	function cmdRun(view, line)
+		local args = {}
+		for w in line:sub(2):gmatch("%S+") do args[#args + 1] = w end
+		local name = (table.remove(args, 1) or ""):lower()
+		if name == "r" then
+			if not lastLine then view.notice("Nothing to repeat yet."); return true end
+			return cmdRun(view, lastLine)
+		end
+		name = ALIASES[name] or name
+		local c = COMMANDS[name]
+		if not c then view.notice("Unknown command ;" .. name .. " (type ;help)"); return true end
+		lastLine = line
+		local ok, err = pcall(c.fn, view, args)
+		if not ok then view.notice("Command error: " .. tostring(err)) end
+		return true
+	end
+
+	-- the Commands page: first page of the sheet, its own card (input bar, tap-to-run list, output)
+	if HOST.Column then
+		local W, LOG_H = 340, 96
+		local col = HOST.Column(1, W)
+		local st = col.Card(nil, "Commands")
+		new("TextLabel", { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20), BackgroundTransparency = 1,
+			Text = "Command bar", Font = T.fontB, TextSize = 15, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		new("TextLabel", { Position = UDim2.fromOffset(16, 32), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1,
+			Text = "Type a command and press Enter, or tap one below", Font = T.font, TextSize = 11, TextColor3 = T.mut,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		local bar = new("Frame", { Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -24, 0, 38), BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.92, Parent = st }, { corner(19), stroke(0.88) })
+		new("TextLabel", { Position = UDim2.fromOffset(14, 0), Size = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = ";",
+			Font = T.fontB, TextSize = 15, TextColor3 = T.accB, Parent = bar })
+		local box = new("TextBox", { Position = UDim2.fromOffset(28, 0), Size = UDim2.new(1, -96, 1, 0), BackgroundTransparency = 1, Text = "",
+			PlaceholderText = "command, e.g. ping", PlaceholderColor3 = T.mut, TextColor3 = T.text, Font = T.font, TextSize = 13,
+			TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = bar })
+		local runBg = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -5, 0.5, 0), Size = UDim2.fromOffset(54, 30),
+			BackgroundColor3 = WHITE, Parent = bar }, { corner(15), grad(0) })
+		local runBtn = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "Run", Font = T.fontB, TextSize = 13,
+			TextColor3 = WHITE, AutoButtonColor = false, Parent = runBg })
+
+		-- output log (bottom of the card)
+		local logBox = new("ScrollingFrame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, LOG_H),
+			BackgroundColor3 = WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut,
+			ScrollBarImageTransparency = 0.5, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
+			corner(12),
+			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }),
+			new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }),
+		})
+		local logN = 0
+		local function log(text, echo)
+			logN += 1
+			new("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Text = tostring(text),
+				Font = echo and T.fontB or T.font, TextSize = 12, TextColor3 = echo and T.text or T.mut, TextWrapped = true,
+				TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = logN, Parent = logBox })
+			local kids = {}
+			for _, k in ipairs(logBox:GetChildren()) do if k:IsA("TextLabel") then kids[#kids + 1] = k end end
+			if #kids > 80 then
+				table.sort(kids, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+				for i = 1, #kids - 80 do kids[i]:Destroy() end
+			end
+			task.defer(function()
+				RunService.Heartbeat:Wait()
+				if alive and logBox.Parent then logBox.CanvasPosition = Vector2.new(0, math.max(0, logBox.AbsoluteCanvasSize.Y - logBox.AbsoluteSize.Y)) end
+			end)
+		end
+		local ctx = { notice = function(t) log(t, false) end }
+		log("Ready. Type a command or tap one from the list.", false)
+
+		-- tap-to-run list (filters while you type)
+		new("TextLabel", { Position = UDim2.fromOffset(16, 100), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1, Text = "TAP A COMMAND TO RUN IT",
+			Font = T.fontB, TextSize = 10, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 118), Size = UDim2.new(1, -24, 1, -(118 + LOG_H + 22)),
+			BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut, ScrollBarImageTransparency = 0.5,
+			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
+			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }),
+		})
+
+		local function exec(text)
+			text = tostring(text or ""):match("^%s*(.-)%s*$") or ""
+			if text:sub(1, 1) == ";" then text = text:sub(2) end
+			if text == "" then return end
+			log("> " .. text, true)
+			cmdRun(ctx, ";" .. text)
+			box.Text = ""
+		end
+		bind(runBtn.Activated, function() exec(box.Text) end)
+		bind(box.FocusLost, function(enter) if enter then exec(box.Text) end end)
+
+		local rows = {}
+		for i, name in ipairs(ORDER) do
+			local c = COMMANDS[name]
+			local takesArg = c.arg == true
+			local row = new("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, Text = "",
+				AutoButtonColor = false, LayoutOrder = i, Parent = list }, { corner(10) })
+			new("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(84, 30), BackgroundTransparency = 1, Text = ";" .. name,
+				Font = T.fontB, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+			new("TextLabel", { Position = UDim2.fromOffset(94, 0), Size = UDim2.new(1, -102, 1, 0), BackgroundTransparency = 1,
+				Text = (c.desc:gsub("%s*[:;]%s*[;<].*$", "")), Font = T.font, TextSize = 11, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
+			bind(row.Activated, function()
+				if takesArg then box.Text = name .. " "; box:CaptureFocus() else exec(name) end
+			end)
+			rows[#rows + 1] = { row = row, name = name }
+		end
+		bind(box:GetPropertyChangedSignal("Text"), function()
+			local q = (box.Text:lower():gsub("^;", "")):match("^(%S*)") or ""
+			for _, r in ipairs(rows) do r.row.Visible = (q == "" or r.name:find(q, 1, true) ~= nil) end
+		end)
+
+		conns[#conns + 1] = { Disconnect = function() pcall(HOST.RemoveColumns, { col }) end }
+	end
+
+	genv.SaikiCommands = { Destroy = function()
+		alive = false
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	end }
+end)
+
 --==================== SAIKI RECHAT MODULE ====================
 HOST.Run("Chat", function()
 --[[
@@ -2647,256 +2938,6 @@ local function toast(msg)
 		tween(l, 0.25, { BackgroundTransparency = 1, TextTransparency = 1 })
 		task.delay(0.3, function() l:Destroy() end)
 	end)
-end
-
------------------------------------------------------------------ command bar: type ;help in any chat (never sent as a message)
-do
-	local TeleportService = game:GetService("TeleportService")
-	local StatsService = game:GetService("Stats")
-	local COMMANDS, ALIASES, ORDER = {}, {}, {}
-	local lastLine
-	local function reg(name, desc, fn, aliases)
-		COMMANDS[name] = { desc = desc, fn = fn }
-		ORDER[#ORDER + 1] = name
-		for _, a in ipairs(aliases or {}) do ALIASES[a] = name end
-	end
-	local function copy(text)
-		local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
-		if not fn then return false end
-		return (pcall(fn, text))
-	end
-	local function hasServer(view)
-		if game.JobId == "" then view.notice("No server id here (Studio)."); return false end
-		return true
-	end
-
-	-- public server list: "Asc" = fewest players first, "Desc" = most players first (full servers left out)
-	local function fetchServers(order)
-		if not REQUEST then return nil, "No HTTP function found." end
-		local ok, res = pcall(REQUEST, { Url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%s&excludeFullGames=true&limit=100"):format(game.PlaceId, order), Method = "GET" })
-		if not ok or type(res) ~= "table" or type(res.Body) ~= "string" then return nil, "Could not reach the server list." end
-		local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
-		if not ok2 or type(data) ~= "table" or type(data.data) ~= "table" then return nil, "Server list unavailable, try again." end
-		local out = {}
-		for _, s in ipairs(data.data) do
-			if s.id ~= game.JobId and (s.playing or 0) < (s.maxPlayers or 0) then out[#out + 1] = s end
-		end
-		return out
-	end
-	local function hop(view, mode)
-		view.notice("Looking for a server...")
-		task.spawn(function()
-			local list, err = fetchServers(mode == "most" and "Desc" or "Asc")
-			if not list then view.notice(err); return end
-			if #list == 0 then view.notice("No other open servers found."); return end
-			local pick = (mode == "random") and list[math.random(#list)] or list[1]
-			view.notice(("Joining a server with %d/%d players..."):format(pick.playing or 0, pick.maxPlayers or 0))
-			if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, LP) end) then view.notice("Teleport failed.") end
-		end)
-	end
-
-	reg("rejoin", "Rejoin this server", function(view)
-		view.notice("Rejoining...")
-		local ok
-		if game.JobId ~= "" then
-			ok = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end)
-		else
-			ok = pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
-		end
-		if not ok then view.notice("Teleport failed.") end
-	end, { "rj" })
-	reg("serverhop", "Hop to a random other server", function(view) hop(view, "random") end, { "hop", "sh" })
-	reg("shmost", "Hop to the server with the most players", function(view) hop(view, "most") end)
-	reg("shlowest", "Hop to the server with the fewest players", function(view) hop(view, "fewest") end, { "shfewest" })
-	reg("jobid", "Copy a join link for this server", function(view)
-		if not hasServer(view) then return end
-		local link = ("roblox://experiences/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
-		view.notice(copy(link) and "Join link copied." or ("Job ID: " .. game.JobId))
-	end, { "joinlink" })
-	reg("join", "Join a server by Job ID: ;join <jobid>", function(view, args)
-		local id = args[1]
-		if not id then view.notice("Usage: ;join <jobid>"); return end
-		view.notice("Joining...")
-		if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LP) end) then view.notice("Teleport failed.") end
-	end)
-	COMMANDS.join.arg = true -- tapping it in the list fills the input instead of running
-	reg("serverinfo", "Show players, server age and ids", function(view)
-		local age = math.floor(workspace.DistributedGameTime)
-		view.notice(("Players %d/%d  |  up %dh %dm"):format(#Players:GetPlayers(), Players.MaxPlayers, age // 3600, (age % 3600) // 60))
-		view.notice("Place " .. tostring(game.PlaceId) .. "  |  Job " .. (game.JobId ~= "" and game.JobId or "studio"))
-	end, { "info" })
-	reg("ping", "Show your ping", function(view)
-		local ok, v = pcall(function() return StatsService.Network.ServerStatsItem["Data Ping"]:GetValue() end)
-		view.notice(ok and ("Ping: " .. math.floor(v + 0.5) .. " ms") or "Ping is not available here.")
-	end)
-	reg("fps", "Show your framerate", function(view)
-		task.spawn(function()
-			local frames, t0 = 0, os.clock()
-			while os.clock() - t0 < 0.6 do RunService.RenderStepped:Wait(); frames += 1 end
-			view.notice(("FPS: %d"):format(math.floor(frames / (os.clock() - t0) + 0.5)))
-		end)
-	end)
-	local function myPos()
-		local ch = LP.Character
-		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-		return hrp and hrp.Position or nil
-	end
-	reg("pos", "Show your position", function(view)
-		local p = myPos()
-		view.notice(p and ("Position: %.1f, %.1f, %.1f"):format(p.X, p.Y, p.Z) or "No character yet.")
-	end, { "position" })
-	reg("copycoords", "Copy your position (x, y, z)", function(view)
-		local p = myPos()
-		if not p then view.notice("No character yet."); return end
-		view.notice(copy(("%.2f, %.2f, %.2f"):format(p.X, p.Y, p.Z)) and "Coordinates copied." or "Clipboard not available.")
-	end, { "cc" })
-	local afkConn
-	reg("antiafk", "Stop the idle kick", function(view)
-		if afkConn then view.notice("Anti-AFK is already on."); return end
-		afkConn = LP.Idled:Connect(function()
-			pcall(function()
-				local vu = game:GetService("VirtualUser")
-				vu:CaptureController()
-				vu:ClickButton2(Vector2.new())
-			end)
-		end)
-		conns[#conns + 1] = afkConn
-		view.notice("Anti-AFK on.")
-	end)
-	reg("unantiafk", "Turn anti-AFK off", function(view)
-		if not afkConn then view.notice("Anti-AFK is not on."); return end
-		afkConn:Disconnect(); afkConn = nil
-		view.notice("Anti-AFK off.")
-	end)
-	reg("help", "List commands, or ;help <command>", function(view, args)
-		local q = args[1] and args[1]:lower()
-		if q then
-			q = ALIASES[q] or q
-			local c = COMMANDS[q]
-			view.notice(c and (";" .. q .. " - " .. c.desc) or ("No command called " .. q))
-			return
-		end
-		view.notice("Commands (;help <name> for details):")
-		local line = ""
-		for _, n in ipairs(ORDER) do
-			if #line + #n > 44 then view.notice(line); line = "" end
-			line = line .. ";" .. n .. "  "
-		end
-		if line ~= "" then view.notice(line) end
-		view.notice(";r repeats your last command")
-	end, { "cmds", "commands" })
-
-	function T.cmdRun(view, line)
-		local args = {}
-		for w in line:sub(2):gmatch("%S+") do args[#args + 1] = w end
-		local name = (table.remove(args, 1) or ""):lower()
-		if name == "r" then
-			if not lastLine then view.notice("Nothing to repeat yet."); return true end
-			return T.cmdRun(view, lastLine)
-		end
-		name = ALIASES[name] or name
-		local c = COMMANDS[name]
-		if not c then view.notice("Unknown command ;" .. name .. " (type ;help)"); return true end
-		lastLine = line
-		local ok, err = pcall(c.fn, view, args)
-		if not ok then view.notice("Command error: " .. tostring(err)) end
-		return true
-	end
-
-	-- the Commands page: first page of the sheet, its own card (input bar, tap-to-run list, output)
-	if HOST.Column then
-		local W, LOG_H = 340, 96
-		local col = HOST.Column(1, W)
-		local st = col.Card(nil, "Commands")
-		new("TextLabel", { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20), BackgroundTransparency = 1,
-			Text = "Command bar", Font = T.fontB, TextSize = 15, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
-		new("TextLabel", { Position = UDim2.fromOffset(16, 32), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1,
-			Text = "Type a command and press Enter, or tap one below", Font = T.font, TextSize = 11, TextColor3 = T.mut,
-			TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
-		local bar = new("Frame", { Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -24, 0, 38), BackgroundColor3 = WHITE,
-			BackgroundTransparency = 0.92, Parent = st }, { corner(19), stroke(0.88) })
-		new("TextLabel", { Position = UDim2.fromOffset(14, 0), Size = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = ";",
-			Font = T.fontB, TextSize = 15, TextColor3 = T.accB, Parent = bar })
-		local box = new("TextBox", { Position = UDim2.fromOffset(28, 0), Size = UDim2.new(1, -96, 1, 0), BackgroundTransparency = 1, Text = "",
-			PlaceholderText = "command, e.g. ping", PlaceholderColor3 = T.mut, TextColor3 = T.text, Font = T.font, TextSize = 13,
-			TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = bar })
-		local runBg = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -5, 0.5, 0), Size = UDim2.fromOffset(54, 30),
-			BackgroundColor3 = WHITE, Parent = bar }, { corner(15), grad(0) })
-		local runBtn = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "Run", Font = T.fontB, TextSize = 13,
-			TextColor3 = WHITE, AutoButtonColor = false, Parent = runBg })
-
-		-- output log (bottom of the card)
-		local logBox = new("ScrollingFrame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, LOG_H),
-			BackgroundColor3 = WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut,
-			ScrollBarImageTransparency = 0.5, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-			ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
-			corner(12),
-			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }),
-			new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }),
-		})
-		local logN = 0
-		local function log(text, echo)
-			logN += 1
-			new("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Text = tostring(text),
-				Font = echo and T.fontB or T.font, TextSize = 12, TextColor3 = echo and T.text or T.mut, TextWrapped = true,
-				TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = logN, Parent = logBox })
-			local kids = {}
-			for _, k in ipairs(logBox:GetChildren()) do if k:IsA("TextLabel") then kids[#kids + 1] = k end end
-			if #kids > 80 then
-				table.sort(kids, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
-				for i = 1, #kids - 80 do kids[i]:Destroy() end
-			end
-			task.defer(function()
-				RunService.Heartbeat:Wait()
-				if alive and logBox.Parent then logBox.CanvasPosition = Vector2.new(0, math.max(0, logBox.AbsoluteCanvasSize.Y - logBox.AbsoluteSize.Y)) end
-			end)
-		end
-		local ctx = { notice = function(t) log(t, false) end }
-		log("Ready. Type a command or tap one from the list.", false)
-
-		-- tap-to-run list (filters while you type)
-		new("TextLabel", { Position = UDim2.fromOffset(16, 100), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1, Text = "TAP A COMMAND TO RUN IT",
-			Font = T.fontB, TextSize = 10, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
-		local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 118), Size = UDim2.new(1, -24, 1, -(118 + LOG_H + 22)),
-			BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut, ScrollBarImageTransparency = 0.5,
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
-			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }),
-		})
-
-		local function exec(text)
-			text = tostring(text or ""):match("^%s*(.-)%s*$") or ""
-			if text:sub(1, 1) == ";" then text = text:sub(2) end
-			if text == "" then return end
-			log("> " .. text, true)
-			T.cmdRun(ctx, ";" .. text)
-			box.Text = ""
-		end
-		bind(runBtn.Activated, function() exec(box.Text) end)
-		bind(box.FocusLost, function(enter) if enter then exec(box.Text) end end)
-
-		local rows = {}
-		for i, name in ipairs(ORDER) do
-			local c = COMMANDS[name]
-			local takesArg = c.arg == true
-			local row = new("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, Text = "",
-				AutoButtonColor = false, LayoutOrder = i, Parent = list }, { corner(10) })
-			new("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(84, 30), BackgroundTransparency = 1, Text = ";" .. name,
-				Font = T.fontB, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
-			new("TextLabel", { Position = UDim2.fromOffset(94, 0), Size = UDim2.new(1, -102, 1, 0), BackgroundTransparency = 1,
-				Text = (c.desc:gsub("%s*[:;]%s*[;<].*$", "")), Font = T.font, TextSize = 11, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left,
-				TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
-			bind(row.Activated, function()
-				if takesArg then box.Text = name .. " "; box:CaptureFocus() else exec(name) end
-			end)
-			rows[#rows + 1] = { row = row, name = name }
-		end
-		bind(box:GetPropertyChangedSignal("Text"), function()
-			local q = (box.Text:lower():gsub("^;", "")):match("^(%S*)") or ""
-			for _, r in ipairs(rows) do r.row.Visible = (q == "" or r.name:find(q, 1, true) ~= nil) end
-		end)
-
-		conns[#conns + 1] = { Disconnect = function() pcall(HOST.RemoveColumns, { col }) end }
-	end
 end
 
 local menu
