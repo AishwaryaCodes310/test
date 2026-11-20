@@ -64,6 +64,32 @@ HOST.Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pcall(function() HOST.Gui.ScreenInsets = Enum.ScreenInsets.None end)
 HOST.Gui.Parent = PARENT
 
+pcall(function()
+    local old = game:GetService("Lighting"):FindFirstChild("SAIKI_BLUR")
+    if old then old:Destroy() end
+end)
+HOST.Dim = Instance.new("Frame")
+HOST.Dim.Name = "SaikiBackdrop"
+HOST.Dim.BackgroundColor3 = Color3.new(0, 0, 0)
+HOST.Dim.BackgroundTransparency = 1
+HOST.Dim.BorderSizePixel = 0
+HOST.Dim.Position = UDim2.fromScale(0, 0)
+HOST.Dim.Size = UDim2.fromScale(1, 1)
+HOST.Dim.ZIndex = 0
+HOST.Dim.Active = false
+HOST.Dim.Parent = HOST.Gui
+HOST.Blur = nil
+pcall(function()
+    local b = Instance.new("BlurEffect")
+    b.Name = "SAIKI_BLUR"
+    b.Size = 0
+    b.Enabled = true
+    b.Parent = game:GetService("Lighting")
+    HOST.Blur = b
+end)
+HOST.Gui.Destroying:Connect(function()
+    if HOST.Blur then pcall(function() HOST.Blur:Destroy() end) end
+end)
 HOST.Sheet = Instance.new("Frame")
 HOST.Sheet.Name = "SaikiSheet"
 HOST.Sheet.BackgroundTransparency = 1
@@ -97,6 +123,11 @@ local function tween(obj, t, props)
         return TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
     end)
     if ok then tw:Play() end
+end
+
+function HOST.Backdrop(on)
+    tween(HOST.Dim, 0.3, { BackgroundTransparency = on and 0.45 or 1 })
+    if HOST.Blur then tween(HOST.Blur, 0.3, { Size = on and 18 or 0 }) end
 end
 
 local pageTitle = Instance.new("TextLabel")
@@ -149,6 +180,7 @@ HOST.Cols = {}
 HOST.OnScroll = {}
 HOST.SecStart = {}
 HOST.Pages = {}
+HOST.PageStarts = {}
 local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
 local MIN_S, MAX_S = 0.5, 1.5
 local lastVP = Vector2.new(0, 0)
@@ -200,8 +232,8 @@ end
 -- start of the page that holds canvas position x
 function HOST.PageFor(x)
     local best = HOST.Pages[1] or 0
-    for _, px in ipairs(HOST.Pages) do
-        if px <= x + 1 then best = px end
+    for i, gx in ipairs(HOST.PageStarts) do
+        if gx <= x + 1 then best = HOST.Pages[i] end
     end
     return best
 end
@@ -256,22 +288,23 @@ function HOST.Relayout()
     local sH = avail / DESIGN_H
     local sW = (vw - 2 * m) / maxW
     local s = math.clamp(math.min(sH, sW), MIN_S, MAX_S)
-    -- tall screens (phones held upright) let the cards use the full height, wide screens keep the design shape
-    local A = (sW < sH) and avail or math.min(avail, DESIGN_H * s)
-    A = math.max(160, A)
+    -- the cards fill the height between the top and bottom space, so there is no empty gap above / below them
+    local A = avail
     local yBase = math.max(3, math.floor((scrollH - A) / 2 + 0.5)) -- centres the card area in the scroll area
 
     local oldPages = HOST.Pages
     local oldPos = Scroll.CanvasPosition.X
-    local pages = {}
+    local pages, starts = {}, {}
     table.clear(HOST.SecStart)
-    local pageX = 0
-    for _, g in ipairs(groups) do
-        local gw = g.w * s
-        local pageW = math.max(vw, gw + 2 * m)
-        local x = pageX + (pageW - gw) / 2 -- centred inside its page (starts at the margin when wider than the screen)
-        pages[#pages + 1] = pageX
-        if not HOST.SecStart[g.section] then HOST.SecStart[g.section] = pageX end
+    -- side space that centres a group when it is scrolled to (just the margin when it is wider than the screen)
+    local function padFor(g) return math.max(m, (vw - g.w * s) / 2) end
+    local x = (#groups > 0) and padFor(groups[1]) or m
+    for gi, g in ipairs(groups) do
+        local gx = x
+        local target = math.max(0, gx - padFor(g))
+        pages[gi] = target
+        starts[gi] = gx
+        if not HOST.SecStart[g.section] then HOST.SecStart[g.section] = target end
         for _, col in ipairs(g.cols) do
             local cw = math.floor(col.w * s + 0.5)
             local fixedSum, flexN = 0, 0
@@ -294,17 +327,20 @@ function HOST.Relayout()
             end
             x += cw + GAP_X * s
         end
-        pageX += pageW
     end
+    local lastG = groups[#groups]
+    local pageX = x - GAP_X * s + (lastG and padFor(lastG) or m)
     HOST.Pages = pages
-    Scroll.CanvasSize = UDim2.fromOffset(pageX, 0)
+    HOST.PageStarts = starts
+    Scroll.CanvasSize = UDim2.fromOffset(math.floor(pageX + 0.5), 0)
 
     local maxX = math.max(0, pageX - Scroll.AbsoluteSize.X)
     if lastVP ~= gs and lastVP.X > 0 and #oldPages > 0 and #pages > 0 then
         -- the screen changed size (rotation / resize): stay on the same page, re-centred
-        local near = 1
+        local near, bestD = 1, math.huge
         for i, px in ipairs(oldPages) do
-            if px <= oldPos + 1 then near = i end
+            local d = math.abs(px - oldPos)
+            if d < bestD then bestD, near = d, i end
         end
         Scroll.CanvasPosition = Vector2.new(math.clamp(pages[math.min(near, #pages)], 0, maxX), 0)
     elseif Scroll.CanvasPosition.X > maxX then
@@ -432,10 +468,11 @@ local hiddenByToggle = {}
 function HOST.SetVisible(v)
     visible = v
     HOST.Sheet.Visible = v
+    HOST.Backdrop(v)
     if not v then
         table.clear(hiddenByToggle)
         for _, child in ipairs(HOST.Gui:GetChildren()) do
-            if child ~= Toggle and child ~= HOST.Sheet and child:IsA("GuiObject") and child.Visible then
+            if child ~= Toggle and child ~= HOST.Sheet and child ~= HOST.Dim and child:IsA("GuiObject") and child.Visible then
                 hiddenByToggle[child] = true
                 child.Visible = false
             end
@@ -491,6 +528,7 @@ end
 
 function HOST.Start()
     HOST.Sheet.Visible = true
+    HOST.Backdrop(true)
     HOST.Relayout()
     HOST.JumpSection(1, true)
 end
