@@ -3484,9 +3484,32 @@ end
 ---------------------------------------------------------------- page + helpers
 local page = H.page
 for _, c in ipairs(page:GetChildren()) do c:Destroy() end
-local sc = newScroll(page)
-local order = 0
-local TW = 447 - 12 - 76
+-- The Settings tab is a collage of cards; the sheet lays these four parts out as separate cards
+local function part() return new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = page }) end
+local parts = { cats = part(), main = part(), quick = part(), support = part() }
+T.settingsParts = parts
+local CATS = {
+	{ "Performance", "Rendering and speed", 1 },
+	{ "Notifications", "Pop-ups and alerts", 1 },
+	{ "Appearance", "Theme and colours", 1 },
+	{ "Window", "Size and position", 2 },
+}
+local mainTitle = new("TextLabel", { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20), BackgroundTransparency = 1,
+	Text = CATS[1][1], Font = T.fontB, TextSize = 16, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = parts.main })
+local mainSub = new("TextLabel", { Position = UDim2.fromOffset(16, 33), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1,
+	Text = CATS[1][2], Font = T.font, TextSize = 11, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, Parent = parts.main })
+local mainBody = new("Frame", { Position = UDim2.fromOffset(0, 56), Size = UDim2.new(1, 0, 1, -56), BackgroundTransparency = 1, Parent = parts.main })
+local catScroll = {}
+for i = 1, #CATS do
+	catScroll[i] = newScroll(mainBody)
+	catScroll[i].Visible = (i == 1)
+end
+local sc, order = catScroll[1], 0
+local function useCat(i) sc, order = catScroll[i], 0 end
+local tiles, switches = {}, {}
+local W_MAIN = 340
+local TW = W_MAIN - 28 - 24 - 56 -- text width next to a switch
+local WIDE = W_MAIN - 28 - 24      -- text width of a full-width row
 
 local function textH(text, size, w)
 	local ok, v = pcall(function() return TextService:GetTextSize(text, size, T.font, Vector2.new(w, 10000)).Y end)
@@ -3526,24 +3549,36 @@ local function makeSwitch(parent, on, onChange)
 		BackgroundColor3 = WHITE, ZIndex = 2, Parent = track }, { corner(9) })
 	local lbl = new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 40), Size = UDim2.fromOffset(44, 14),
 		BackgroundTransparency = 1, Text = on and "ON" or "OFF", Font = T.fontB, TextSize = 10, TextColor3 = T.mut, Parent = parent })
-	track.Activated:Connect(function()
+	local function toggle()
 		state = not state
 		lbl.Text = state and "ON" or "OFF"
 		tween(fill, 0.2, { BackgroundTransparency = state and 0 or 1 })
 		tween(knob, 0.2, { Position = state and onPos or offPos })
 		if onChange then onChange(state) end
-	end)
+	end
+	track.Activated:Connect(toggle)
+	return { toggle = toggle, get = function() return state end,
+		set = function(v) -- visual only (used when a quick-settings tile flips the setting)
+			state = v
+			lbl.Text = v and "ON" or "OFF"
+			tween(fill, 0.2, { BackgroundTransparency = v and 0 or 1 })
+			tween(knob, 0.2, { Position = v and onPos or offPos })
+		end }
 end
-local function toggleRow(name, text, on, onChange)
+local function toggleRow(name, text, on, onChange, key)
 	local dh = textH(text, 12, TW)
 	local c = card(33 + dh + 14)
 	local y = title(c, name)
 	desc(c, text, y, TW)
-	makeSwitch(c, on, onChange)
+	local sw = makeSwitch(c, on, function(v)
+		if onChange then onChange(v) end
+		if key and tiles[key] then tiles[key](v) end
+	end)
+	if key then switches[key] = sw end
 end
 
 ---------------------------------------------------------------- performance
-header("Performance")
+useCat(1)
 toggleRow("Chat Rendering",
 	"ON (Smooth): messages pop in with a short animation, tabs slide and the background blurs. Looks best. OFF (Lite): everything appears instantly, the blur is removed and only the latest 40 messages per chat are kept, so it lags less on weak devices and very busy servers.",
 	V.anim, function(v)
@@ -3552,10 +3587,10 @@ toggleRow("Chat Rendering",
 		if H.blur and H.open() then tween(H.blur, 0.3, { Size = v and 14 or 0 }) end
 		save()
 		toast(v and "Smooth rendering" or "Lite rendering")
-	end)
+	end, "anim")
 
 ---------------------------------------------------------------- notifications
-header("Notifications")
+useCat(2)
 toggleRow("Notifications",
 	"ON: small pop-ups appear at the bottom left for new DMs, for unread DMs when the script loads, and for new messages in the server chat while the chat window is closed. They hide by themselves after 3 seconds, or tap the \195\151 to close one. OFF: no pop-ups at all (the unread dots still work).",
 	V.notif, function(v)
@@ -3563,18 +3598,18 @@ toggleRow("Notifications",
 		if not v and T.clearNotifs then T.clearNotifs() end
 		save()
 		toast(v and "Notifications on" or "Notifications off")
-	end)
+	end, "notif")
 
 ---------------------------------------------------------------- theme
-header("Appearance")
+useCat(3)
 local setTheme
 do
 	local text = "Changes the window colours with a smooth fade. Dark is the default. AMOLED is pure black (great on OLED screens). Lovely is a soft pink and Gold a premium cream-and-gold look; both have a solid, see-through-free window."
-	local dh = textH(text, 12, 447 - 24)
-	local c = card(33 + dh + 10 + 36 + 12)
+	local dh = textH(text, 12, WIDE)
+	local c = card(33 + dh + 10 + 78 + 12)
 	local y = title(c, "Theme")
-	desc(c, text, y, 447 - 24)
-	local row = new("Frame", { Position = UDim2.fromOffset(12, y + dh + 10), Size = UDim2.new(1, -24, 0, 36), BackgroundTransparency = 1, Parent = c })
+	desc(c, text, y, WIDE)
+	local row = new("Frame", { Position = UDim2.fromOffset(12, y + dh + 10), Size = UDim2.new(1, -24, 0, 78), BackgroundTransparency = 1, Parent = c })
 	local chips = {}
 	local busy = false
 	local function nudge(col) return Color3.new(math.min(1, col.R + 0.002), col.G, col.B) end
@@ -3704,7 +3739,7 @@ do
 	for i, name in ipairs(ORDER) do
 		local th = THEMES[name]
 		local sel = (name == V.theme)
-		local btn = new("TextButton", { Position = UDim2.new((i - 1) / #ORDER, 0, 0, 0), Size = UDim2.new(1 / #ORDER, -5, 1, 0),
+		local btn = new("TextButton", { Position = UDim2.new(((i - 1) % 4) / 4, 0, 0, math.floor((i - 1) / 4) * 42), Size = UDim2.new(1 / 4, -5, 0, 36),
 			BackgroundColor3 = WHITE, BackgroundTransparency = sel and 0.8 or 0.94, Text = "", AutoButtonColor = false, Parent = row },
 			{ corner(12) })
 		local str = stroke(sel and 0.35 or 0.92)
@@ -3726,9 +3761,11 @@ do
 end
 
 ---------------------------------------------------------------- GUI size
+useCat(4)
 local reclamp
 do
 	local MINV, MAXV = 0.6, 1.3
+	local myScroll = sc
 	local text = "Makes the chat window smaller or larger (60% to 130%). On small screens it can never grow past what fits. Let go of the slider to apply it."
 	local dh = textH(text, 12, TW)
 	local c = card(33 + dh + 10 + 26 + 12)
@@ -3771,7 +3808,7 @@ do
 	hit.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
-			sc.ScrollingEnabled = false
+			myScroll.ScrollingEnabled = false
 			fromX(i.Position.X)
 		end
 	end)
@@ -3783,7 +3820,7 @@ do
 	bind(UserInputService.InputEnded, function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
 			dragging = false
-			sc.ScrollingEnabled = true
+			myScroll.ScrollingEnabled = true
 			apply()
 		end
 	end)
@@ -3836,24 +3873,25 @@ do
 			end
 			save()
 			toast(v and "GUI anchored" or "Drag the bar at the top")
-		end)
+		end, "anchor")
 	if not V.anchored then reclamp() end
 end
 
----------------------------------------------------------------- community
-header("Community")
+---------------------------------------------------------------- support card
 do
-	local text = "Have a suggestion, a complaint or need help? Join the Discord and tell us. The invite link is copied to your clipboard (on PC it also tries to open Discord)."
-	local dh = textH(text, 12, 447 - 24)
-	local c = card(33 + dh + 10 + 38 + 8 + 14 + 12)
-	local y = title(c, "Suggestions / Complaints / Support")
-	desc(c, text, y, 447 - 24)
-	local by = y + dh + 10
-	local btn = new("TextButton", { Position = UDim2.fromOffset(12, by), Size = UDim2.new(1, -24, 0, 38), BackgroundColor3 = WHITE,
-		Text = "Join our Discord", Font = T.fontB, TextSize = 14, TextColor3 = INK2, AutoButtonColor = false, Parent = c },
-		{ corner(19), grad(20) })
-	new("TextLabel", { Position = UDim2.fromOffset(12, by + 46), Size = UDim2.new(1, -24, 0, 14), BackgroundTransparency = 1,
-		Text = "discord.gg/" .. DISCORD_CODE, Font = T.font, TextSize = 11, TextColor3 = T.mut, Parent = c })
+	local INKC = INK2
+	new("TextLabel", { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = "Support",
+		Font = T.fontB, TextSize = 13, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = parts.support })
+	new("TextLabel", { Position = UDim2.fromOffset(14, 31), Size = UDim2.new(1, -28, 0, 28), BackgroundTransparency = 1, TextWrapped = true,
+		Text = "Suggestions, complaints or help? Join the Discord. The invite is copied to your clipboard.", Font = T.font, TextSize = 11,
+		TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Parent = parts.support })
+	local btn = new("TextButton", { Position = UDim2.fromOffset(12, 66), Size = UDim2.new(1, -24, 0, 34), BackgroundColor3 = WHITE,
+		Text = "Join our Discord", Font = T.fontB, TextSize = 13, TextColor3 = INKC, AutoButtonColor = false, Parent = parts.support },
+		{ corner(17), grad(20) })
+	new("TextLabel", { Position = UDim2.fromOffset(12, 104), Size = UDim2.new(1, -24, 0, 14), BackgroundTransparency = 1,
+		Text = "discord.gg/" .. DISCORD_CODE, Font = T.font, TextSize = 11, TextColor3 = T.mut, Parent = parts.support })
+	new("TextLabel", { Position = UDim2.fromOffset(12, 122), Size = UDim2.new(1, -24, 0, 14), BackgroundTransparency = 1,
+		Text = "Settings save automatically on this device", Font = T.font, TextSize = 10, TextColor3 = T.mut, Parent = parts.support })
 	btn.Activated:Connect(function()
 		local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
 		local copied = false
@@ -3872,9 +3910,67 @@ do
 	end)
 end
 
-order = order + 1
-new("TextLabel", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Text = "Saiki Rechat V2.8  ·  settings save automatically on this device",
-	Font = T.font, TextSize = 11, TextColor3 = T.mut, LayoutOrder = order, Parent = sc })
+---------------------------------------------------------------- categories card
+local catBtns = {}
+local function selectCat(i)
+	for k = 1, #CATS do
+		catScroll[k].Visible = (k == i)
+		tween(catBtns[k], 0.2, { BackgroundTransparency = (k == i) and 0.88 or 1 })
+	end
+	mainTitle.Text, mainSub.Text = CATS[i][1], CATS[i][2]
+end
+do
+	new("TextLabel", { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = "Categories",
+		Font = T.fontB, TextSize = 13, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = parts.cats })
+	for i, cd in ipairs(CATS) do
+		local b = new("TextButton", { Position = UDim2.fromOffset(8, 38 + (i - 1) * 40), Size = UDim2.new(1, -16, 0, 34), BackgroundColor3 = WHITE,
+			BackgroundTransparency = (i == 1) and 0.88 or 1, Text = "", AutoButtonColor = false, Parent = parts.cats }, { corner(12) })
+		new("TextLabel", { Position = UDim2.fromOffset(8, 7), Size = UDim2.fromOffset(20, 20), BackgroundColor3 = WHITE, Text = cd[1]:sub(1, 1),
+			Font = T.fontB, TextSize = 11, TextColor3 = INK2, Parent = b }, { corner(7), grad(20) })
+		new("TextLabel", { Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -66, 1, 0), BackgroundTransparency = 1, Text = cd[1],
+			Font = T.fontB, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = b })
+		new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 0), Size = UDim2.fromOffset(20, 34), BackgroundTransparency = 1,
+			Text = tostring(cd[3]), Font = T.font, TextSize = 11, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Right, Parent = b })
+		catBtns[i] = b
+		b.Activated:Connect(function() selectCat(i) end)
+	end
+end
+
+---------------------------------------------------------------- quick settings card (tap a tile = flip that setting)
+do
+	new("TextLabel", { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = "Quick settings",
+		Font = T.fontB, TextSize = 13, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = parts.quick })
+	local holder = new("Frame", { Position = UDim2.fromOffset(12, 38), Size = UDim2.new(1, -24, 0, 84), BackgroundTransparency = 1, Parent = parts.quick }, {
+		new("UIGridLayout", { CellSize = UDim2.new(1 / 3, -4, 1, 0), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	local GREEN = Color3.fromRGB(60, 200, 130)
+	local function tile(key, label, onText, offText, order, on)
+		local t = new("TextButton", { LayoutOrder = order, BackgroundColor3 = T.ov or WHITE, BackgroundTransparency = 0.94, Text = "",
+			AutoButtonColor = false, Parent = holder }, { corner(14) })
+		local st = stroke(0.92)
+		st.Parent = t
+		new("TextLabel", { Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = WHITE, Text = label:sub(1, 1),
+			Font = T.fontB, TextSize = 12, TextColor3 = INK2, Parent = t }, { corner(8), grad(20) })
+		new("TextLabel", { Position = UDim2.fromOffset(8, 40), Size = UDim2.new(1, -12, 0, 16), BackgroundTransparency = 1, Text = label,
+			Font = T.fontB, TextSize = 11, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = t })
+		local state = new("TextLabel", { Position = UDim2.fromOffset(8, 57), Size = UDim2.new(1, -12, 0, 14), BackgroundTransparency = 1, Text = "",
+			Font = T.font, TextSize = 10, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, Parent = t })
+		local function paint(v)
+			state.Text = v and onText or offText
+			tween(t, 0.2, { BackgroundColor3 = v and GREEN or (T.ov or WHITE), BackgroundTransparency = v and 0.8 or 0.94 })
+			tween(st, 0.2, { Color = v and GREEN or (T.ov or WHITE), Transparency = v and 0.4 or 0.92 })
+		end
+		paint(on)
+		tiles[key] = paint
+		t.Activated:Connect(function()
+			local sw = switches[key]
+			if sw then sw.toggle() end
+		end)
+	end
+	tile("anim", "Rendering", "Smooth", "Lite", 1, V.anim)
+	tile("notif", "Notifications", "On", "Off", 2, V.notif)
+	tile("anchor", "Anchor GUI", "On", "Off", 3, V.anchored)
+end
 
 ---------------------------------------------------------------- apply saved settings
 T.anim, T.aura, T.guiMul, T.notif = V.anim, V.aura, V.guiMul, V.notif
@@ -4011,6 +4107,21 @@ end)()
 				HOST.Relayout()
 			end
 			cards[2] = cdR.frame
+		elseif idx == 5 and T.settingsParts then
+			-- Settings as a collage: categories + the open category + quick settings + support
+			local P = T.settingsParts
+			local cA = addCol(190)
+			local stC, cdC = cA.Card(214, "SetCategories")
+			local cB = addCol(340)
+			local stM, cdM = cB.Card(nil, "SetMain")
+			local cC = addCol(250)
+			local stQ = cC.Card(136, "SetQuick")
+			local stP = cC.Card(150, "SetSupport")
+			for part, st in pairs({ cats = stC, main = stM, quick = stQ, support = stP }) do
+				P[part].Parent = st
+				P[part].Position, P[part].Size = UDim2.new(), UDim2.fromScale(1, 1)
+			end
+			cards[5] = cdM.frame
 		elseif pg then
 			local c = addCol(460)
 			local st, cd = c.Card(nil, "Chat" .. idx)
