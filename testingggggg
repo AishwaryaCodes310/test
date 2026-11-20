@@ -87,6 +87,7 @@ HOST.ChatSlot = makeSlot("CHAT")
 HOST.GFXSlot = makeSlot("GFX")
 
 local SECTIONS = {
+    { name = "Commands", title = "Commands", sub = "Type a command or tap one to run it" },
     { name = "Chat", title = "Chat", sub = "Server chat, DMs and settings" },
     { name = "Graphics", title = "Graphics", sub = "Change how your game looks, on your screen only" },
     { name = "Sky", title = "Sky Styles", sub = "Pick a look for your sky, on your screen only" },
@@ -1159,7 +1160,6 @@ local function ChatView(parent, onSend, cooldown, placeholder, onReact)
 		local txt = clean(box.Text)
 		if txt == "" then return end
 		if T.chatCommand and T.chatCommand(txt) then box.Text = ""; return end -- dev-only test command (never sent as a message)
-		if txt:match("^;%a") and T.cmdRun then T.cmdRun(self, txt); box.Text = ""; return end -- ;command bar (never sent as a message)
 		local low = txt:lower()
 		if (low == "!anc" or low:sub(1, 5) == "!anc ") and T.annSend then -- announcement command (checked + sent by T.annSend)
 			if T.annSend(self, txt) then box.Text = "" end
@@ -2719,6 +2719,7 @@ do
 		view.notice("Joining...")
 		if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LP) end) then view.notice("Teleport failed.") end
 	end)
+	COMMANDS.join.arg = true -- tapping it in the list fills the input instead of running
 	reg("serverinfo", "Show players, server age and ids", function(view)
 		local age = math.floor(workspace.DistributedGameTime)
 		view.notice(("Players %d/%d  |  up %dh %dm"):format(#Players:GetPlayers(), Players.MaxPlayers, age // 3600, (age % 3600) // 60))
@@ -2800,6 +2801,101 @@ do
 		local ok, err = pcall(c.fn, view, args)
 		if not ok then view.notice("Command error: " .. tostring(err)) end
 		return true
+	end
+
+	-- the Commands page: first page of the sheet, its own card (input bar, tap-to-run list, output)
+	if HOST.Column then
+		local W, LOG_H = 340, 96
+		local col = HOST.Column(1, W)
+		local st = col.Card(nil, "Commands")
+		new("TextLabel", { Position = UDim2.fromOffset(16, 12), Size = UDim2.new(1, -32, 0, 20), BackgroundTransparency = 1,
+			Text = "Command bar", Font = T.fontB, TextSize = 15, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		new("TextLabel", { Position = UDim2.fromOffset(16, 32), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1,
+			Text = "Type a command and press Enter, or tap one below", Font = T.font, TextSize = 11, TextColor3 = T.mut,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		local bar = new("Frame", { Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -24, 0, 38), BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.92, Parent = st }, { corner(19), stroke(0.88) })
+		new("TextLabel", { Position = UDim2.fromOffset(14, 0), Size = UDim2.fromOffset(10, 38), BackgroundTransparency = 1, Text = ";",
+			Font = T.fontB, TextSize = 15, TextColor3 = T.accB, Parent = bar })
+		local box = new("TextBox", { Position = UDim2.fromOffset(28, 0), Size = UDim2.new(1, -96, 1, 0), BackgroundTransparency = 1, Text = "",
+			PlaceholderText = "command, e.g. ping", PlaceholderColor3 = T.mut, TextColor3 = T.text, Font = T.font, TextSize = 13,
+			TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = bar })
+		local runBg = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -5, 0.5, 0), Size = UDim2.fromOffset(54, 30),
+			BackgroundColor3 = WHITE, Parent = bar }, { corner(15), grad(0) })
+		local runBtn = new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "Run", Font = T.fontB, TextSize = 13,
+			TextColor3 = WHITE, AutoButtonColor = false, Parent = runBg })
+
+		-- output log (bottom of the card)
+		local logBox = new("ScrollingFrame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, LOG_H),
+			BackgroundColor3 = WHITE, BackgroundTransparency = 0.95, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut,
+			ScrollBarImageTransparency = 0.5, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
+			corner(12),
+			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }),
+			new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }),
+		})
+		local logN = 0
+		local function log(text, echo)
+			logN += 1
+			new("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Text = tostring(text),
+				Font = echo and T.fontB or T.font, TextSize = 12, TextColor3 = echo and T.text or T.mut, TextWrapped = true,
+				TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = logN, Parent = logBox })
+			local kids = {}
+			for _, k in ipairs(logBox:GetChildren()) do if k:IsA("TextLabel") then kids[#kids + 1] = k end end
+			if #kids > 80 then
+				table.sort(kids, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+				for i = 1, #kids - 80 do kids[i]:Destroy() end
+			end
+			task.defer(function()
+				RunService.Heartbeat:Wait()
+				if alive and logBox.Parent then logBox.CanvasPosition = Vector2.new(0, math.max(0, logBox.AbsoluteCanvasSize.Y - logBox.AbsoluteSize.Y)) end
+			end)
+		end
+		local ctx = { notice = function(t) log(t, false) end }
+		log("Ready. Type a command or tap one from the list.", false)
+
+		-- tap-to-run list (filters while you type)
+		new("TextLabel", { Position = UDim2.fromOffset(16, 100), Size = UDim2.new(1, -32, 0, 14), BackgroundTransparency = 1, Text = "TAP A COMMAND TO RUN IT",
+			Font = T.fontB, TextSize = 10, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left, Parent = st })
+		local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 118), Size = UDim2.new(1, -24, 1, -(118 + LOG_H + 22)),
+			BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mut, ScrollBarImageTransparency = 0.5,
+			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, Parent = st }, {
+			new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }),
+		})
+
+		local function exec(text)
+			text = tostring(text or ""):match("^%s*(.-)%s*$") or ""
+			if text:sub(1, 1) == ";" then text = text:sub(2) end
+			if text == "" then return end
+			log("> " .. text, true)
+			T.cmdRun(ctx, ";" .. text)
+			box.Text = ""
+		end
+		bind(runBtn.Activated, function() exec(box.Text) end)
+		bind(box.FocusLost, function(enter) if enter then exec(box.Text) end end)
+
+		local rows = {}
+		for i, name in ipairs(ORDER) do
+			local c = COMMANDS[name]
+			local takesArg = c.arg == true
+			local row = new("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, Text = "",
+				AutoButtonColor = false, LayoutOrder = i, Parent = list }, { corner(10) })
+			new("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.fromOffset(84, 30), BackgroundTransparency = 1, Text = ";" .. name,
+				Font = T.fontB, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+			new("TextLabel", { Position = UDim2.fromOffset(94, 0), Size = UDim2.new(1, -102, 1, 0), BackgroundTransparency = 1,
+				Text = (c.desc:gsub("%s*[:;]%s*[;<].*$", "")), Font = T.font, TextSize = 11, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd, Parent = row })
+			bind(row.Activated, function()
+				if takesArg then box.Text = name .. " "; box:CaptureFocus() else exec(name) end
+			end)
+			rows[#rows + 1] = { row = row, name = name }
+		end
+		bind(box:GetPropertyChangedSignal("Text"), function()
+			local q = (box.Text:lower():gsub("^;", "")):match("^(%S*)") or ""
+			for _, r in ipairs(rows) do r.row.Visible = (q == "" or r.name:find(q, 1, true) ~= nil) end
+		end)
+
+		conns[#conns + 1] = { Disconnect = function() pcall(HOST.RemoveColumns, { col }) end }
 	end
 end
 
@@ -4212,7 +4308,7 @@ end)()
 	HOST.ChatSlot.ZIndex = 120
 
 	local function addCol(width)
-		local c = HOST.Column(1, width)
+		local c = HOST.Column(2, width)
 		cols[#cols + 1] = c
 		return c
 	end
@@ -4794,7 +4890,7 @@ local SKY_META = {
 	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(15, 17, 25)
 	local TXT, MUT = Color3.fromRGB(245, 245, 248), Color3.fromRGB(140, 142, 152)
 	local GREEN = Color3.fromRGB(60, 200, 130)
-	local SEC_GFX, SEC_SKY = 2, 3
+	local SEC_GFX, SEC_SKY = 3, 4
 	local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
 	local cols = {}
 
