@@ -5834,8 +5834,8 @@ end
 end)
 
 -----------------------------------------------------------------
--- SAIKI COMMAND CENTER + PERFORMANCE HUD (additive QoL extension)
--- Does not replace or modify Chat, DMs, Rank, Settings, or Saiki GFX.
+-- SAIKI MOBILE COMMAND HUB + PERFORMANCE HUD (additive QoL extension)
+-- Touch-first controls; keyboard shortcuts remain optional on desktop.
 ;(function()
     local LP = Players.LocalPlayer
     local UIS = UserInputService
@@ -5862,6 +5862,7 @@ end)
     local function persist()
         pcall(function()
             if writefile then
+                if isfolder and not isfolder(folder) and makefolder then makefolder(folder) end
                 writefile(addonFile, HttpService:JSONEncode({ paletteKey = state.paletteKey.Name, hudKey = state.hudKey.Name, hud = state.hud, profiles = state.profiles }))
             end
         end)
@@ -5874,102 +5875,245 @@ end)
     end
     local red = Color3.fromRGB(220, 38, 65)
     local bg = Color3.fromRGB(12, 12, 15)
-    local panel = make("Frame", { Name = "SaikiCommandCenter", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(520, 430), BackgroundColor3 = bg, BackgroundTransparency = 0.04, Visible = false, ZIndex = 300 }, HOST.Gui)
+    local card = Color3.fromRGB(25, 25, 30)
+    local white = Color3.new(1, 1, 1)
+    local muted = Color3.fromRGB(160, 160, 172)
+    local camera = workspace.CurrentCamera
+    local isTouch = UIS.TouchEnabled
+
+    -- The floating entry point is the primary mobile control; no keyboard required.
+    local launcher = make("TextButton", { Name = "SaikiMobileTools", AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, -16, 1, -104), Size = UDim2.fromOffset(isTouch and 76 or 62, isTouch and 58 or 48),
+        BackgroundColor3 = red, Text = "TOOLS", Font = Enum.Font.GothamBold, TextSize = isTouch and 13 or 11,
+        TextColor3 = white, AutoButtonColor = true, ZIndex = 280 }, HOST.Gui)
+    make("UICorner", { CornerRadius = UDim.new(0, 15) }, launcher)
+    make("UIStroke", { Color = white, Transparency = 0.72, Thickness = 1 }, launcher)
+
+    local panel = make("Frame", { Name = "SaikiCommandCenter", AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.94, 0, 0.78, 0),
+        BackgroundColor3 = bg, BackgroundTransparency = 0.025, Visible = false, ZIndex = 300 }, HOST.Gui)
+    make("UISizeConstraint", { MinSize = Vector2.new(260, 280), MaxSize = Vector2.new(560, 650) }, panel)
     make("UICorner", { CornerRadius = UDim.new(0, 16) }, panel)
-    make("UIStroke", { Color = red, Transparency = 0.55, Thickness = 1 }, panel)
-    make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 12), Size = UDim2.new(1, -60, 0, 24),
-        Text = "SAIKI COMMAND CENTER", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = Color3.new(1,1,1), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 301 }, panel)
-    local close = make("TextButton", { Position = UDim2.new(1, -38, 0, 9), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = red,
-        Text = "×", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Color3.new(1,1,1), ZIndex = 302, AutoButtonColor = true }, panel)
+    make("UIStroke", { Color = red, Transparency = 0.45, Thickness = 1.2 }, panel)
+
+    local header = make("Frame", { Name = "Header", Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 48),
+        BackgroundTransparency = 1, ZIndex = 301 }, panel)
+    make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -70, 1, 0),
+        Text = "SAIKI COMMAND HUB", Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = white,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 302 }, header)
+    local close = make("TextButton", { Position = UDim2.new(1, -42, 0, 8), Size = UDim2.fromOffset(32, 32),
+        BackgroundColor3 = red, Text = "×", Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = white, ZIndex = 303 }, header)
     make("UICorner", { CornerRadius = UDim.new(0, 9) }, close)
-    local search = make("TextBox", { Position = UDim2.fromOffset(16, 48), Size = UDim2.new(1, -32, 0, 36), BackgroundColor3 = Color3.fromRGB(25,25,30),
-        PlaceholderText = "Search commands, pages and utilities…", Text = "", ClearTextOnFocus = false, Font = Enum.Font.Gotham, TextSize = 13,
-        TextColor3 = Color3.new(1,1,1), PlaceholderColor3 = Color3.fromRGB(135,135,145), ZIndex = 301 }, panel)
+
+    local search = make("TextBox", { Position = UDim2.fromOffset(12, 54), Size = UDim2.new(1, -24, 0, 42),
+        BackgroundColor3 = card, PlaceholderText = "Search commands and tools…", Text = "", ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
     make("UICorner", { CornerRadius = UDim.new(0, 10) }, search)
-    local rows = make("ScrollingFrame", { Position = UDim2.fromOffset(16, 94), Size = UDim2.new(1, -32, 1, -154), BackgroundTransparency = 1,
-        BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0,0), ZIndex = 301 }, panel)
-    local layout = make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
-    local footer = make("TextButton", { Position = UDim2.new(0, 16, 1, -48), Size = UDim2.new(1, -32, 0, 36), BackgroundTransparency = 1,
-        Text = "RightShift: command center   •   RightAlt: performance HUD   •   Click for profiles / keybinds", Font = Enum.Font.Gotham, TextSize = 10,
-        TextColor3 = Color3.fromRGB(145,145,155), TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, ZIndex = 301 }, panel)
-    local function addCommand(name, detail, action, keywords)
-        return { name = name, detail = detail, action = action, keywords = (keywords or ""):lower() }
+    make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8) }, search)
+
+    local target = make("TextBox", { Position = UDim2.fromOffset(12, 104), Size = UDim2.new(1, -24, 0, 38),
+        BackgroundColor3 = card, PlaceholderText = "Optional player name (for player tools)", Text = "", ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 302 }, panel)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, target)
+    make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 8) }, target)
+
+    local rows = make("ScrollingFrame", { Position = UDim2.fromOffset(12, 150), Size = UDim2.new(1, -24, 1, -254),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = isTouch and 2 or 3,
+        CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 301 }, panel)
+    local layout = make("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
+    local footer = make("TextLabel", { Position = UDim2.new(0, 14, 1, -96), Size = UDim2.new(1, -28, 0, 28),
+        BackgroundTransparency = 1, Text = "Tap a command. Swipe the list to see more.", Font = Enum.Font.Gotham,
+        TextSize = 10, TextColor3 = muted, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 302 }, panel)
+
+    local profileBar = make("Frame", { Position = UDim2.new(0, 12, 1, -62), Size = UDim2.new(1, -24, 0, 48),
+        BackgroundTransparency = 1, ZIndex = 302 }, panel)
+    local profileName = make("TextBox", { Position = UDim2.fromOffset(0, 4), Size = UDim2.new(0.48, -4, 0, 38),
+        BackgroundColor3 = card, PlaceholderText = "Profile name", Text = "", ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = white, PlaceholderColor3 = muted, ZIndex = 303 }, profileBar)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, profileName)
+    make("UIPadding", { PaddingLeft = UDim.new(0, 9) }, profileName)
+    local saveProfile = make("TextButton", { Position = UDim2.new(0.50, 0, 0, 4), Size = UDim2.new(0.25, -3, 0, 38),
+        BackgroundColor3 = red, Text = "SAVE", Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = white, ZIndex = 303 }, profileBar)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, saveProfile)
+    local profilesButton = make("TextButton", { Position = UDim2.new(0.75, 3, 0, 4), Size = UDim2.new(0.25, -3, 0, 38),
+        BackgroundColor3 = card, Text = "PROFILES", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = white, ZIndex = 303 }, profileBar)
+    make("UICorner", { CornerRadius = UDim.new(0, 9) }, profilesButton)
+
+    local function setFooter(t) footer.Text = tostring(t) end
+    local function clipboard(value)
+        local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
+        if type(fn) == "function" then
+            local ok = pcall(fn, tostring(value))
+            if ok then setFooter("Copied: " .. tostring(value):sub(1, 90)); return true end
+        end
+        setFooter(tostring(value))
+        return false
     end
+    local function getRoot()
+        local c = LP.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+    local function findTarget()
+        local q = target.Text:gsub("^%s+", ""):gsub("%s+$", "")
+        if q == "" then setFooter("Enter a player username or display name in the player field first."); return nil end
+        q = q:lower()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Name:lower() == q or plr.DisplayName:lower() == q then return plr end
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Name:lower():find(q, 1, true) or plr.DisplayName:lower():find(q, 1, true) then return plr end
+        end
+        setFooter("No matching player found in this server.")
+        return nil
+    end
+    local previousCameraSubject
+    local function stopSpectating()
+        local cam = workspace.CurrentCamera
+        if cam then
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            cam.CameraSubject = hum or previousCameraSubject
+        end
+        previousCameraSubject = nil
+        setFooter("Camera returned to your character.")
+    end
+    local function spectate()
+        local plr = findTarget(); if not plr then return end
+        local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+        if not hum then setFooter("That player's character is not available yet."); return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        if not previousCameraSubject then previousCameraSubject = cam.CameraSubject end
+        cam.CameraSubject = hum
+        setFooter("Now spectating " .. plr.DisplayName .. " (local camera only).")
+    end
+
     local hud
     local function toggleHud()
         state.hud = not state.hud
         if hud then hud.Visible = state.hud end
         persist()
+        setFooter(state.hud and "Performance HUD enabled." or "Performance HUD hidden.")
     end
-    local commands = {
-        addCommand("Open Chat", "Jump to the existing Saiki chat and DM section", function() HOST.SetPage(1); HOST.SetVisible(true); panel.Visible = false end, "server messages dm"),
-        addCommand("Open Graphics", "Open the existing Saiki GFX controls", function() HOST.SetPage(2); HOST.SetVisible(true); panel.Visible = false end, "gfx visuals performance sky"),
-        addCommand("Open Sky Styles", "Open the existing sky-style section", function() HOST.SetPage(3); HOST.SetVisible(true); panel.Visible = false end, "sky atmosphere"),
-        addCommand("Toggle Saiki Window", "Show or hide the Saiki sheet", function() HOST.SetVisible(not HOST.Sheet.Visible); panel.Visible = false end, "hide show toggle gui"),
-        addCommand("Performance HUD", "Show FPS, ping and memory usage", function() toggleHud(); panel.Visible = false end, "fps ping memory stats"),
-        addCommand("Rejoin Server", "Reconnect to this game server", function() panel.Visible = false; pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end) end, "reconnect teleport"),
-        addCommand("Reset Character", "Reset your own character", function() panel.Visible = false; local c = LP.Character; local h = c and c:FindFirstChildOfClass("Humanoid"); if h then h.Health = 0 end end, "respawn reset"),
-        addCommand("Copy Coordinates", "Copy your current position when clipboard support exists", function()
-            local c = LP.Character; local root = c and c:FindFirstChild("HumanoidRootPart"); if not root then return end
-            local p = root.Position; local value = string.format("%.2f, %.2f, %.2f", p.X, p.Y, p.Z)
-            local fn = setclipboard or toclipboard or (syn and syn.write_clipboard)
-            if fn then pcall(fn, value); footer.Text = "Copied coordinates: " .. value else footer.Text = value end
-        end, "position location coords"),
-    }
-    local function rebuild()
-        for _, child in ipairs(rows:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
-        local q = search.Text:lower()
-        local count = 0
-        local visibleCommands = table.clone(commands)
-        for profileName in pairs(state.profiles) do
-            local savedName = profileName
-            visibleCommands[#visibleCommands + 1] = addCommand("Load profile: " .. savedName,
-                "Restore saved Saiki settings; rerun Saiki Rechat to apply the restored settings", function()
-                    local raw = state.profiles[savedName]
-                    if type(raw) ~= "string" then footer.Text = "That profile is no longer available."; return end
-                    local ok = pcall(function() writefile(settingsFile, raw) end)
-                    footer.Text = ok and ("Restored " .. savedName .. ". Re-run Saiki Rechat to apply it.") or "Could not restore this profile on this executor."
-                    panel.Visible = false
-                end, "profile preset config settings")
+    local commands = {}
+    local function addCommand(name, detail, action, keywords, category)
+        commands[#commands + 1] = { name = name, detail = detail, action = action,
+            keywords = (keywords or ""):lower(), category = category or "General" }
+    end
+    addCommand("Open Chat and DMs", "Open Saiki's existing chat and direct messages", function() HOST.SetPage(1); HOST.SetVisible(true); panel.Visible = false end, "server messages private dm inbox", "Navigation")
+    addCommand("Open Graphics", "Open the existing Saiki GFX controls", function() HOST.SetPage(2); HOST.SetVisible(true); panel.Visible = false end, "gfx visuals graphics fps", "Navigation")
+    addCommand("Open Sky Styles", "Open the existing sky-style controls", function() HOST.SetPage(3); HOST.SetVisible(true); panel.Visible = false end, "sky atmosphere lighting", "Navigation")
+    addCommand("Hide / Show Saiki", "Toggle the existing Saiki interface", function() HOST.SetVisible(not HOST.Sheet.Visible); panel.Visible = false end, "hide show toggle gui window", "Navigation")
+    addCommand("Performance HUD", "Show or hide FPS, ping and memory", toggleHud, "fps ping memory stats monitor", "Performance")
+    addCommand("Rejoin Current Server", "Reconnect to this exact server instance", function() panel.Visible = false; pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end) end, "reconnect rejoin server", "Server")
+    addCommand("Copy Experience Link", "Copy the experience link; use Roblox servers to choose another instance", function() clipboard("https://www.roblox.com/games/" .. tostring(game.PlaceId)) end, "server hop servers game link", "Server")
+    addCommand("Copy Game Link", "Copy the current experience URL", function() clipboard("https://www.roblox.com/games/" .. tostring(game.PlaceId)) end, "place url link game", "Copy")
+    addCommand("Copy Place ID", "Copy this experience's PlaceId", function() clipboard(game.PlaceId) end, "place id universe", "Copy")
+    addCommand("Copy Server Job ID", "Copy this server instance ID", function() clipboard(game.JobId) end, "job instance server id", "Copy")
+    addCommand("Copy My Username", "Copy your Roblox username", function() clipboard(LP.Name) end, "username account name", "Copy")
+    addCommand("Copy My User ID", "Copy your Roblox UserId", function() clipboard(LP.UserId) end, "userid account id", "Copy")
+    addCommand("Copy Coordinates", "Copy your current X, Y and Z position", function()
+        local root = getRoot(); if not root then setFooter("Your character is not ready."); return end
+        local p = root.Position; clipboard(string.format("%.2f, %.2f, %.2f", p.X, p.Y, p.Z))
+    end, "position location coordinates xyz", "Copy")
+    addCommand("Copy My Display Name", "Copy your Roblox display name", function() clipboard(LP.DisplayName) end, "displayname nickname", "Copy")
+    addCommand("Spectate Player", "View a player through your local camera; does not affect them", spectate, "watch view camera follow player", "Players")
+    addCommand("Stop Spectating", "Return the camera to your own character", stopSpectating, "camera restore self stop watch", "Players")
+    addCommand("Copy Target Username", "Copy the matching player's username from the player field", function() local p = findTarget(); if p then clipboard(p.Name) end end, "player username copy target", "Players")
+    addCommand("Copy Target Display Name", "Copy the matching player's display name", function() local p = findTarget(); if p then clipboard(p.DisplayName) end end, "player displayname copy target", "Players")
+    addCommand("Reset Character", "Reset your own character", function()
+        local c = LP.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
+        if h then h.Health = 0; setFooter("Character reset requested.") else setFooter("Your character is not ready.") end
+    end, "respawn reset die", "Character")
+    addCommand("Restore Camera", "Restore your camera to your character", stopSpectating, "camera default restore", "Character")
+    addCommand("FOV: Default (70)", "Set your local camera field of view to 70", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 70; setFooter("Camera FOV set to 70.") end end, "camera zoom fov default", "Camera")
+    addCommand("FOV: Wide (90)", "Set your local camera field of view to 90", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 90; setFooter("Camera FOV set to 90.") end end, "camera zoom fov wide", "Camera")
+    addCommand("FOV: Narrow (55)", "Set your local camera field of view to 55", function() local cam = workspace.CurrentCamera; if cam then cam.FieldOfView = 55; setFooter("Camera FOV set to 55.") end end, "camera zoom fov narrow", "Camera")
+
+    local rebuild
+    local function addProfileCommands(out)
+        for profileName, raw in pairs(state.profiles) do
+            local savedName, savedRaw = profileName, raw
+            out[#out + 1] = { name = "Load Profile: " .. savedName,
+                detail = "Restore the saved Saiki settings file (re-run Saiki to apply)", keywords = "profile preset config settings load",
+                action = function()
+                    if type(savedRaw) ~= "string" then setFooter("Profile data is invalid."); return end
+                    local ok = pcall(function() if not writefile then error("writefile unavailable") end; writefile(settingsFile, savedRaw) end)
+                    setFooter(ok and ("Restored profile '" .. savedName .. "'. Re-run Saiki Rechat to apply it.") or "Could not restore this profile on this executor.")
+                end }
+            out[#out + 1] = { name = "Delete Profile: " .. savedName, detail = "Remove this saved profile", keywords = "profile remove delete",
+                action = function() state.profiles[savedName] = nil; persist(); setFooter("Deleted profile '" .. savedName .. "'."); rebuild() end }
         end
-        for _, item in ipairs(visibleCommands) do
-            if q == "" or item.name:lower():find(q,1,true) or item.detail:lower():find(q,1,true) or item.keywords:find(q,1,true) then
+    end
+    rebuild = function()
+        for _, child in ipairs(rows:GetChildren()) do if child:IsA("TextButton") or child:IsA("Frame") then child:Destroy() end end
+        local q = search.Text:lower()
+        local visible = table.clone(commands)
+        addProfileCommands(visible)
+        local count = 0
+        for _, item in ipairs(visible) do
+            if q == "" or item.name:lower():find(q, 1, true) or item.detail:lower():find(q, 1, true) or item.keywords:find(q, 1, true) then
                 count += 1
-                local b = make("TextButton", { Name = "Command_" .. count, Size = UDim2.new(1, -4, 0, 54), BackgroundColor3 = Color3.fromRGB(22,22,27),
-                    Text = "", AutoButtonColor = true, LayoutOrder = count, ZIndex = 302 }, rows)
+                local b = make("TextButton", { Name = "Command_" .. count, Size = UDim2.new(1, -2, 0, isTouch and 64 or 56),
+                    BackgroundColor3 = card, Text = "", AutoButtonColor = true, LayoutOrder = count, ZIndex = 302 }, rows)
                 make("UICorner", { CornerRadius = UDim.new(0, 10) }, b)
-                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 18),
-                    Text = item.name, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.new(1,1,1), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 303 }, b)
-                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 27), Size = UDim2.new(1, -24, 0, 17),
-                    Text = item.detail, Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = Color3.fromRGB(155,155,165), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 303 }, b)
-                b.Activated:Connect(function() pcall(item.action) end)
+                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(13, 8), Size = UDim2.new(1, -26, 0, 20),
+                    Text = item.name, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = white,
+                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 303 }, b)
+                make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(13, 31), Size = UDim2.new(1, -26, 0, 25),
+                    Text = item.detail, Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = muted,
+                    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+                    TextWrapped = true, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 303 }, b)
+                b.Activated:Connect(function()
+                    local ok, err = pcall(item.action)
+                    if not ok then setFooter("Command error: " .. tostring(err):sub(1, 100)) end
+                end)
             end
         end
-        rows.CanvasSize = UDim2.fromOffset(0, count * 60)
-        if count == 0 then footer.Text = "No matching commands. Try another search." end
+        rows.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 4)
+        if count == 0 then setFooter("No matching commands. Try a shorter search.") end
     end
     search:GetPropertyChangedSignal("Text"):Connect(rebuild)
-    close.Activated:Connect(function() panel.Visible = false end)
     layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() rows.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 4) end)
-    rebuild()
+    close.Activated:Connect(function() panel.Visible = false end)
+    launcher.Activated:Connect(function() panel.Visible = not panel.Visible end)
 
-    -- Compact performance dashboard. It samples locally and never changes game settings.
-    hud = make("Frame", { Name = "SaikiPerformanceHUD", Position = UDim2.new(1, -230, 0, 90), Size = UDim2.fromOffset(214, 104),
-        BackgroundColor3 = bg, BackgroundTransparency = 0.08, Visible = state.hud, ZIndex = 250 }, HOST.Gui)
+    -- Save the current settings file under a user-named local profile.
+    saveProfile.Activated:Connect(function()
+        local name = profileName.Text:gsub("[^%w _%-]", ""):sub(1, 28)
+        if name == "" then setFooter("Type a profile name first."); return end
+        local raw
+        pcall(function() if isfile and readfile and isfile(settingsFile) then raw = readfile(settingsFile) end end)
+        if not raw then setFooter("Saiki settings file not found yet; change/save a setting first."); return end
+        state.profiles[name] = raw; persist(); setFooter("Saved profile: " .. name); rebuild()
+    end)
+    profilesButton.Activated:Connect(function()
+        search.Text = "profile"
+        setFooter("Tap a Load Profile or Delete Profile entry in the list.")
+    end)
+
+    -- Compact, touch-friendly performance panel. Tap its X to hide it.
+    hud = make("Frame", { Name = "SaikiPerformanceHUD", AnchorPoint = Vector2.new(0, 0),
+        Position = UDim2.new(0, 12, 0, 82), Size = UDim2.fromOffset(210, 104),
+        BackgroundColor3 = bg, BackgroundTransparency = 0.06, Visible = state.hud, ZIndex = 270 }, HOST.Gui)
     make("UICorner", { CornerRadius = UDim.new(0, 12) }, hud)
-    make("UIStroke", { Color = red, Transparency = 0.6 }, hud)
-    local hudTitle = make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -20, 0, 16),
-        Text = "SAIKI PERFORMANCE", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = red, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 251 }, hud)
-    local hudStats = make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 27), Size = UDim2.new(1, -20, 1, -34),
-        Text = "FPS: --\nPing: --\nMemory: -- MB", Font = Enum.Font.Code, TextSize = 12, TextColor3 = Color3.new(1,1,1),
-        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 251 }, hud)
-    local frames, elapsed, fps = 0, 0, 0
+    make("UIStroke", { Color = red, Transparency = 0.5 }, hud)
+    make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 7), Size = UDim2.new(1, -42, 0, 16),
+        Text = "SAIKI PERFORMANCE", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = red,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 271 }, hud)
+    local hudClose = make("TextButton", { Position = UDim2.new(1, -29, 0, 4), Size = UDim2.fromOffset(24, 24),
+        BackgroundColor3 = card, Text = "×", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = white, ZIndex = 272 }, hud)
+    make("UICorner", { CornerRadius = UDim.new(0, 7) }, hudClose)
+    local hudStats = make("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 28), Size = UDim2.new(1, -20, 1, -34),
+        Text = "FPS: --\nPing: --\nMemory: -- MB", Font = Enum.Font.Code, TextSize = 12, TextColor3 = white,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 271 }, hud)
+    hudClose.Activated:Connect(function() state.hud = false; hud.Visible = false; persist() end)
+    local frames, elapsed = 0, 0
     local hudConn = RS.RenderStepped:Connect(function(dt)
         frames += 1; elapsed += dt
-        if elapsed >= 0.5 then
-            fps = math.floor(frames / elapsed + 0.5); frames, elapsed = 0, 0
-            if state.hud then
+        if elapsed >= 0.75 then
+            local fps = math.floor(frames / elapsed + 0.5); frames, elapsed = 0, 0
+            if state.hud and hud.Parent then
                 local ping, memory = "--", "--"
                 pcall(function() ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValueString() end)
                 pcall(function() memory = string.format("%.0f", Stats:GetTotalMemoryUsageMb()) end)
@@ -5977,71 +6121,48 @@ end)
             end
         end
     end)
-    local capture = nil
-    local inputConn = UIS.InputBegan:Connect(function(input, processed)
-        if capture then
-            if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
-                if capture == "palette" then state.paletteKey = input.KeyCode else state.hudKey = input.KeyCode end
-                capture = nil; persist()
-                footer.Text = "Keybind saved. Palette: " .. state.paletteKey.Name .. " | HUD: " .. state.hudKey.Name
+
+    -- Drag the hub and HUD using mouse or touch; this is intentionally not keyboard-only.
+    local dragConnections = {}
+    local function makeDraggable(handle, object)
+        local dragging, dragInput, startPos, objectPos = false, nil, nil, nil
+        handle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true; dragInput = input; startPos = input.Position; objectPos = object.Position
+                input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
             end
-            return
-        end
+        end)
+        handle.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+        end)
+        dragConnections[#dragConnections + 1] = UIS.InputChanged:Connect(function(input)
+            if dragging and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+                local delta = input.Position - startPos
+                object.Position = UDim2.new(objectPos.X.Scale, objectPos.X.Offset + delta.X, objectPos.Y.Scale, objectPos.Y.Offset + delta.Y)
+            end
+        end)
+    end
+    makeDraggable(header, panel)
+    makeDraggable(hud:FindFirstChildWhichIsA("TextLabel"), hud)
+
+    -- Desktop shortcuts are optional; mobile users can use the always-visible TOOLS button.
+    local inputConn = UIS.InputBegan:Connect(function(input, processed)
         if processed or UIS:GetFocusedTextBox() then return end
-        if input.KeyCode == state.paletteKey then
-            panel.Visible = not panel.Visible
-        elseif input.KeyCode == state.hudKey then
-            state.hud = not state.hud; hud.Visible = state.hud; persist()
-        end
+        if input.KeyCode == state.paletteKey then panel.Visible = not panel.Visible
+        elseif input.KeyCode == state.hudKey then toggleHud() end
     end)
     HOST.Gui.Destroying:Connect(function()
         pcall(function() hudConn:Disconnect() end)
         pcall(function() inputConn:Disconnect() end)
+        for _, connection in ipairs(dragConnections) do pcall(function() connection:Disconnect() end) end
     end)
-
-    -- Keybind editor is available through the command center footer's right-click-free shortcut.
-    local keybindButton = make("TextButton", { Position = UDim2.new(1, -230, 0, 202), Size = UDim2.fromOffset(214, 26),
-        BackgroundColor3 = Color3.fromRGB(25,25,30), Text = "Edit keybinds", Font = Enum.Font.GothamBold, TextSize = 10,
-        TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 252 }, HOST.Gui)
-    make("UICorner", { CornerRadius = UDim.new(0, 8) }, keybindButton)
-    keybindButton.Activated:Connect(function()
-        footer.Text = "Press a key for Command Center…"; capture = "palette"
-        task.delay(0.15, function() if capture == "palette" then return end end)
-    end)
-    local hudBindButton = make("TextButton", { Position = UDim2.new(1, -230, 0, 232), Size = UDim2.fromOffset(214, 26),
-        BackgroundColor3 = Color3.fromRGB(25,25,30), Text = "Edit HUD keybind", Font = Enum.Font.GothamBold, TextSize = 10,
-        TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 252 }, HOST.Gui)
-    make("UICorner", { CornerRadius = UDim.new(0, 8) }, hudBindButton)
-    hudBindButton.Activated:Connect(function() footer.Text = "Press a key for Performance HUD…"; capture = "hud" end)
-
-    -- Profile save/load uses Saiki's existing settings file without altering its schema.
-    local profileName = make("TextBox", { Position = UDim2.fromOffset(16, 0), Size = UDim2.fromOffset(190, 30), BackgroundColor3 = Color3.fromRGB(25,25,30),
-        PlaceholderText = "Profile name", Text = "", ClearTextOnFocus = false, Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 302 }, panel)
-    make("UICorner", { CornerRadius = UDim.new(0, 8) }, profileName)
-    local saveProfile = make("TextButton", { Position = UDim2.fromOffset(214, 0), Size = UDim2.fromOffset(92, 30), BackgroundColor3 = red,
-        Text = "Save profile", Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = Color3.new(1,1,1), Visible = false, ZIndex = 302 }, panel)
-    make("UICorner", { CornerRadius = UDim.new(0, 8) }, saveProfile)
-    saveProfile.Activated:Connect(function()
-        local name = profileName.Text:gsub("[^%w _%-]", ""):sub(1, 28)
-        if name == "" then footer.Text = "Enter a profile name first."; return end
-        local raw
-        pcall(function() if isfile and readfile and isfile(settingsFile) then raw = readfile(settingsFile) end end)
-        if not raw then footer.Text = "No saved Saiki settings file was found yet."; return end
-        state.profiles[name] = raw; persist(); footer.Text = "Saved profile: " .. name
-    end)
-    -- Expose the profile controls via the footer label's double click; avoids changing existing tabs/cards.
-    footer.Activated:Connect(function()
-        profileName.Visible = not profileName.Visible; saveProfile.Visible = profileName.Visible
-        keybindButton.Visible = profileName.Visible; hudBindButton.Visible = profileName.Visible
-    end)
-    profileName.FocusLost:Connect(function() end)
+    rebuild()
     state.hud = state.hud == true
     hud.Visible = state.hud
     persist()
-    HOST.CommandCenter = { Toggle = function() panel.Visible = not panel.Visible end, Open = function() panel.Visible = true end,
-        ToggleHUD = toggleHud, Profiles = state.profiles }
+    HOST.CommandCenter = { Toggle = function() panel.Visible = not panel.Visible end,
+        Open = function() panel.Visible = true end, ToggleHUD = toggleHud, Profiles = state.profiles }
 end)()
-
 
 -- Unified host cleanup handle.
 HOST.Start()
