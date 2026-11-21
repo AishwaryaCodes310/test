@@ -957,14 +957,20 @@ if HOST_OPTIONS then
             FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
             SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, Bar)
         local barScale = mk("UIScale", {}, Bar)
+        -- One fixed, compact size that only depends on the screen width. It is NOT measured from the
+        -- layout (measuring a scaled layout feeds back into itself and made the bar flash big/small).
+        local NAT_W = 680 -- approximate unscaled width of the whole row
         local function fit()
-            local w = barList.AbsoluteContentSize.X
             local gw = HOST.Gui.AbsoluteSize.X
-            if w <= 0 or gw <= 0 then return end
+            if gw <= 0 then
+                local cam = workspace.CurrentCamera
+                gw = cam and cam.ViewportSize.X or 1280
+            end
             local avail = gw / 2 - 71 - 20 - 14 -- the space right of the centred Saiki button
-            barScale.Scale = math.clamp(avail / w, 0.5, 1)
+            local target = math.floor(math.clamp(avail / NAT_W, 0.5, 0.9) * 100 + 0.5) / 100
+            if barScale.Scale ~= target then barScale.Scale = target end
         end
-        barList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fit)
+        fit()
         HOST.Gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
 
         local function capsule(order)
