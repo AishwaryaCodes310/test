@@ -68,7 +68,8 @@ HOST.Sheet = Instance.new("Frame")
 HOST.Sheet.Name = "SaikiSheet"
 HOST.Sheet.BackgroundTransparency = 1
 HOST.Sheet.BorderSizePixel = 0
-HOST.Sheet.Position = UDim2.fromScale(0, 0)
+HOST.Sheet.AnchorPoint = Vector2.new(0.5, 0.5) -- centred so the Novoline pop-in/out scales from the middle
+HOST.Sheet.Position = UDim2.fromScale(0.5, 0.5)
 HOST.Sheet.Size = UDim2.fromScale(1, 1)
 HOST.Sheet.Visible = false
 HOST.Sheet.Parent = HOST.Gui
@@ -503,6 +504,7 @@ local function dockCardX(name)
     return nil
 end
 
+local dockOn = {}
 local function paintDock()
     if not HOST_DOCK then return end
     local pos = Scroll.CanvasPosition.X
@@ -521,8 +523,20 @@ local function paintDock()
     if maxX > 0 and pos >= maxX - 4 and lastShown then active = lastShown end
     for i, b in ipairs(dockBtns) do
         local on = (i == active)
-        b.BackgroundTransparency = on and 0 or 1
-        b.TextColor3 = on and Color3.fromRGB(18, 18, 20) or SAIKIUI.mut
+        -- Novoline: the highlight fades between tabs instead of snapping
+        if dockOn[i] ~= on then
+            local first = dockOn[i] == nil
+            dockOn[i] = on
+            local goal = {
+                BackgroundTransparency = on and 0 or 1,
+                TextColor3 = on and Color3.fromRGB(18, 18, 20) or SAIKIUI.mut,
+            }
+            if first then
+                for k, val in pairs(goal) do b[k] = val end
+            else
+                tween(b, 0.24, goal)
+            end
+        end
     end
 end
 HOST.OnScroll[#HOST.OnScroll + 1] = paintDock
@@ -530,14 +544,287 @@ HOST.OnScroll[#HOST.OnScroll + 1] = paintDock
 function HOST.LayoutDock(compact, dockH)
     Dock.Size = UDim2.fromOffset(0, dockH)
     Dock.Position = UDim2.new(0.5, 0, 1, compact and -8 or -14)
+    HOST._dockBase = Dock.Position
     for _, b in ipairs(dockBtns) do b.TextSize = compact and 11 or 12 end
+end
+
+----------------------------------------------------------------
+-- NOVOLINE FX: GUI effects ported from the Novoline script
+--   * press-squish + hover lift on every button
+--   * soft glow on the main buttons (Saiki toggle + dock)
+--   * pop-in / pop-out of the whole sheet (scale + fade, Back ease)
+--   * slowly drifting gradient on the page title
+--   * dock highlight fades between tabs (see paintDock)
+-- Set FX_ENABLED = false to switch every effect off.
+----------------------------------------------------------------
+local FX_ENABLED = true
+local FX = { closing = false }
+HOST.FX = FX
+local RunService = game:GetService("RunService")
+
+local function fxPlay(obj, info, props)
+    local ok, tw = pcall(function() return TweenService:Create(obj, info, props) end)
+    if ok and tw then
+        tw:Play()
+        return tw
+    end
+    return nil
+end
+
+local INFO_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local INFO_DOWN = TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local INFO_UP = TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local INFO_GLOW = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local PRESS_MAX_W, PRESS_MAX_H = 360, 96 -- bigger buttons (whole-card hit areas) are left alone
+
+-- hover lift + press squish for one button (Novoline: kit.softButton / _nv_pressable)
+function FX.hook(btn)
+    if btn:GetAttribute("FXHooked") or btn:GetAttribute("NoPress") or btn.Name == "DragHandle" then return end
+    btn:SetAttribute("FXHooked", true)
+    local lift, press
+
+    local function fits()
+        local s = btn.AbsoluteSize
+        return s.X >= 4 and s.Y >= 4 and s.X <= PRESS_MAX_W and s.Y <= PRESS_MAX_H
+    end
+    local function ghost() -- invisible hit-area buttons get no effect
+        if btn.BackgroundTransparency < 1 then return false end
+        if btn:IsA("TextButton") and btn.Text ~= "" then return false end
+        if btn:IsA("ImageButton") and btn.Image ~= "" then return false end
+        return btn:FindFirstChildWhichIsA("GuiObject") == nil
+    end
+
+    btn.MouseEnter:Connect(function()
+        if not fits() or ghost() then return end
+        if btn:FindFirstChildWhichIsA("UIGridStyleLayout") then return end
+        if not (lift and lift.Parent) then
+            lift = Instance.new("Frame")
+            lift.Name = "FXLift"
+            lift.BackgroundColor3 = Color3.new(1, 1, 1)
+            lift.BackgroundTransparency = 1
+            lift.BorderSizePixel = 0
+            lift.Size = UDim2.fromScale(1, 1)
+            lift.ZIndex = btn.ZIndex + 1
+            lift.Active = false
+            pcall(function() lift.Interactable = false end)
+            Instance.new("UICorner", lift)
+            lift.Parent = btn
+        end
+        local src = btn:FindFirstChildOfClass("UICorner")
+        local own = lift:FindFirstChildOfClass("UICorner")
+        if own then own.CornerRadius = src and src.CornerRadius or UDim.new(0, 0) end
+        fxPlay(lift, INFO_HOVER, { BackgroundTransparency = 0.94 })
+    end)
+
+    local function release()
+        if press and press.Parent then fxPlay(press, INFO_UP, { Scale = 1 }) end
+    end
+    btn.MouseLeave:Connect(function()
+        if lift and lift.Parent then fxPlay(lift, INFO_HOVER, { BackgroundTransparency = 1 }) end
+        release()
+    end)
+    btn.InputBegan:Connect(function(input)
+        local k = input.UserInputType
+        if k ~= Enum.UserInputType.MouseButton1 and k ~= Enum.UserInputType.Touch then return end
+        if not fits() or ghost() then return end
+        if not (press and press.Parent) then
+            if btn:FindFirstChildOfClass("UIScale") then return end -- the button already scales itself
+            press = Instance.new("UIScale")
+            press.Name = "FXPress"
+            press.Parent = btn
+        end
+        fxPlay(press, INFO_DOWN, { Scale = 0.95 })
+    end)
+    btn.InputEnded:Connect(function(input)
+        local k = input.UserInputType
+        if k == Enum.UserInputType.MouseButton1 or k == Enum.UserInputType.Touch then release() end
+    end)
+end
+
+-- soft glow under a button that brightens on hover (Novoline's ButtonGlow)
+function FX.glow(btn, rest, hover)
+    local shadow
+    pcall(function()
+        local s = Instance.new("UIShadow") -- not available on every client: then only the rim brightens
+        s.Name = "FXGlow"
+        s.Color = Color3.new(1, 1, 1)
+        s.BlurRadius = UDim.new(0, 10)
+        s.Offset = UDim2.fromOffset(0, 1)
+        s.Transparency = rest
+        s.Parent = btn
+        shadow = s
+    end)
+    local stroke = btn:FindFirstChildOfClass("UIStroke")
+    local strokeRest = stroke and stroke.Transparency or 1
+    if shadow then
+        local function sync() pcall(function() shadow.Enabled = btn.BackgroundTransparency < 0.6 end) end
+        sync()
+        btn:GetPropertyChangedSignal("BackgroundTransparency"):Connect(sync)
+    end
+    btn.MouseEnter:Connect(function()
+        if shadow then fxPlay(shadow, INFO_GLOW, { Transparency = hover }) end
+        if stroke then fxPlay(stroke, INFO_GLOW, { Transparency = math.max(0, strokeRest - 0.3) }) end
+    end)
+    btn.MouseLeave:Connect(function()
+        if shadow then fxPlay(shadow, INFO_GLOW, { Transparency = rest }) end
+        if stroke then fxPlay(stroke, INFO_GLOW, { Transparency = strokeRest }) end
+    end)
+end
+
+-- slowly drifting gradient on a label (Novoline's _nv_micro.gradientText)
+function FX.gradientText(label, speed)
+    speed = math.max(0.2, speed or 8)
+    local white = Color3.fromRGB(246, 246, 248)
+    local grad = Instance.new("UIGradient")
+    grad.Name = "FXLiveGradient"
+    grad.Parent = label
+    label.TextColor3 = Color3.new(1, 1, 1)
+
+    local set, setKey
+    local function palette()
+        local a = HOST.AccentA
+        if set and a == setKey then return set end
+        setKey = a
+        if typeof(a) ~= "Color3" then
+            set = { white, Color3.fromRGB(196, 196, 206), white }
+        else
+            local h, s = a:ToHSV()
+            local soft = Color3.fromHSV(h, math.min(s, 0.55), 1)
+            set = { white, white:Lerp(soft, 0.55), white:Lerp(soft, 0.25) }
+        end
+        return set
+    end
+    local function colorAt(p, g)
+        g = g % 300
+        local i = math.floor(g / 100)
+        local f = g / 100 - i
+        return p[i + 1]:Lerp(p[(i + 1) % 3 + 1], f)
+    end
+
+    local clock, lastOff, lastKey = 0, nil, nil
+    local conn
+    conn = RunService.Heartbeat:Connect(function(dt)
+        if not label.Parent then
+            conn:Disconnect()
+            return
+        end
+        if not HOST.Sheet.Visible then return end
+        clock += dt
+        local swing = (clock / speed) % 2
+        local t = swing < 1 and swing or 2 - swing
+        local off = math.floor((0.5 - math.cos(math.pi * t) / 2) * 2000 + 0.5) / 10
+        local p = palette()
+        if off == lastOff and setKey == lastKey then return end
+        lastOff, lastKey = off, setKey
+        local keys = { ColorSequenceKeypoint.new(0, colorAt(p, off)) }
+        local edge = (math.floor(off / 100) + 1) * 100
+        local u = (edge - off) / 100
+        if u > 0.001 and u < 0.999 then
+            keys[#keys + 1] = ColorSequenceKeypoint.new(u, colorAt(p, edge))
+        end
+        keys[#keys + 1] = ColorSequenceKeypoint.new(1, colorAt(p, off + 100))
+        grad.Color = ColorSequence.new(keys)
+    end)
+    return grad
+end
+
+-- pop-in / pop-out of the whole sheet (Novoline: pill.popIn / pill.popOut)
+do
+    local sheetScale = Instance.new("UIScale")
+    sheetScale.Name = "FXSheetScale"
+    sheetScale.Parent = HOST.Sheet
+    HOST._dockBase = HOST._dockBase or Dock.Position
+
+    local DOCK_BG, DOCK_RIM, SLIDE = 0.06, 0.86, 26
+    local INFO_IN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local INFO_FADE_IN = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    local INFO_OUT = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+    local token = 0
+
+    local function dockRim() return Dock:FindFirstChildOfClass("UIStroke") end
+    local function setTexts(v)
+        pageTitle.TextTransparency = v
+        pageSub.TextTransparency = v
+        for _, b in ipairs(dockBtns) do b.TextTransparency = v end
+    end
+    local function tweenTexts(info, v)
+        fxPlay(pageTitle, info, { TextTransparency = v })
+        fxPlay(pageSub, info, { TextTransparency = v })
+        for _, b in ipairs(dockBtns) do fxPlay(b, info, { TextTransparency = v }) end
+    end
+
+    function FX.popIn(force)
+        if not FX_ENABLED then
+            HOST.Sheet.Visible = true
+            return
+        end
+        if HOST.Sheet.Visible and not FX.closing and not force then return end
+        token += 1
+        FX.closing = false
+        HOST.Sheet.Visible = true
+        sheetScale.Scale = 0.9
+        fxPlay(sheetScale, INFO_IN, { Scale = 1 })
+        setTexts(1)
+        tweenTexts(INFO_FADE_IN, 0)
+        local base = HOST._dockBase or Dock.Position
+        Dock.Position = base + UDim2.fromOffset(0, SLIDE)
+        Dock.BackgroundTransparency = 1
+        fxPlay(Dock, INFO_FADE_IN, { Position = base, BackgroundTransparency = DOCK_BG })
+        local rim = dockRim()
+        if rim then
+            rim.Transparency = 1
+            fxPlay(rim, INFO_FADE_IN, { Transparency = DOCK_RIM })
+        end
+    end
+
+    function FX.popOut()
+        if not FX_ENABLED then
+            HOST.Sheet.Visible = false
+            return
+        end
+        if not HOST.Sheet.Visible then return end
+        token += 1
+        local mine = token
+        FX.closing = true
+        fxPlay(sheetScale, INFO_OUT, { Scale = 0.9 })
+        tweenTexts(INFO_OUT, 1)
+        local base = HOST._dockBase or Dock.Position
+        fxPlay(Dock, INFO_OUT, { Position = base + UDim2.fromOffset(0, SLIDE), BackgroundTransparency = 1 })
+        local rim = dockRim()
+        if rim then fxPlay(rim, INFO_OUT, { Transparency = 1 }) end
+        task.delay(0.25, function()
+            if mine ~= token then return end -- reopened while it was closing
+            FX.closing = false
+            HOST.Sheet.Visible = false
+            sheetScale.Scale = 1
+            setTexts(0)
+            Dock.Position = HOST._dockBase or base
+            Dock.BackgroundTransparency = DOCK_BG
+            local r = dockRim()
+            if r then r.Transparency = DOCK_RIM end
+        end)
+    end
+end
+
+if FX_ENABLED then
+    for _, o in ipairs(HOST.Gui:GetDescendants()) do
+        if o:IsA("GuiButton") then pcall(FX.hook, o) end
+    end
+    HOST.Gui.DescendantAdded:Connect(function(o)
+        if o:IsA("GuiButton") then
+            task.defer(function() pcall(FX.hook, o) end)
+        end
+    end)
+    pcall(FX.glow, Toggle, 0.9, 0.8)
+    for _, b in ipairs(dockBtns) do pcall(FX.glow, b, 0.92, 0.84) end
+    pcall(FX.gradientText, pageTitle, 8)
 end
 
 local visible = true
 local hiddenByToggle = {}
 function HOST.SetVisible(v)
     visible = v
-    HOST.Sheet.Visible = v
+    if v then FX.popIn() else FX.popOut() end
     if not v then
         table.clear(hiddenByToggle)
         for _, child in ipairs(HOST.Gui:GetChildren()) do
@@ -599,6 +886,7 @@ function HOST.Start()
     HOST.Sheet.Visible = true
     HOST.Relayout()
     HOST.JumpSection(1, true)
+    FX.popIn(true)
 end
 
 
@@ -3892,6 +4180,7 @@ do
 		if busy or not th then return end
 		busy = true
 		T.bg, T.accA, T.accB, T.text, T.mut, T.ov, T.bgT = th.bg, th.accA, th.accB, th.text, th.mut, th.ov, th.bgT
+		HOST.AccentA = th.accA -- the animated title gradient follows the theme
 		task.spawn(function()
 			local ok, err = pcall(recolor, th, instant)
 			if not ok then warn("[SAIKI RECHAT] theme change: " .. tostring(err)) end
