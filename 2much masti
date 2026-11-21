@@ -820,6 +820,363 @@ if FX_ENABLED then
     pcall(FX.gradientText, pageTitle, 8)
 end
 
+----------------------------------------------------------------
+-- TOP-RIGHT OPTIONS (Novoline-style): Speed, Jump, Fly, Go to player
+-- A capsule at the top right opens a small panel. Each row has a - / + stepper
+-- (hold to repeat) and a switch. Fly: move with the normal controls, the camera
+-- aims the flight; Space / E = up, Ctrl / Q = down on PC.
+-- Set HOST_OPTIONS = false to remove it.
+----------------------------------------------------------------
+local HOST_OPTIONS = true
+if HOST_OPTIONS then
+    local OPT = {
+        speed = { on = false, v = 50, min = 16, max = 250, step = 2 },
+        jump = { on = false, v = 100, min = 50, max = 350, step = 5 },
+        fly = { on = false, v = 60, min = 20, max = 300, step = 5 },
+    }
+    local function getHum()
+        local c = LocalPlayer.Character
+        return c and c:FindFirstChildOfClass("Humanoid")
+    end
+    local function getRoot()
+        local c = LocalPlayer.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- ===== behaviour =====
+    local orig = {}
+    local bv, bg
+    local function flyCleanup(resetStand)
+        if bv then bv:Destroy() bv = nil end
+        if bg then bg:Destroy() bg = nil end
+        if resetStand then
+            local h = getHum()
+            if h then h.PlatformStand = false end
+        end
+    end
+    LocalPlayer.CharacterAdded:Connect(function()
+        orig = {}
+        flyCleanup(false)
+    end)
+
+    RunService.Heartbeat:Connect(function()
+        local h, root = getHum(), getRoot()
+        if not h then return end
+        -- speed
+        if OPT.speed.on then
+            if orig.speed == nil then orig.speed = h.WalkSpeed end
+            h.WalkSpeed = OPT.speed.v
+        elseif orig.speed ~= nil then
+            h.WalkSpeed = orig.speed
+            orig.speed = nil
+        end
+        -- jump
+        if OPT.jump.on then
+            if orig.jump == nil then orig.jump = { h.UseJumpPower, h.JumpPower, h.JumpHeight } end
+            h.UseJumpPower = true
+            h.JumpPower = OPT.jump.v
+        elseif orig.jump ~= nil then
+            h.UseJumpPower, h.JumpPower, h.JumpHeight = orig.jump[1], orig.jump[2], orig.jump[3]
+            orig.jump = nil
+        end
+        -- fly
+        if OPT.fly.on and root then
+            if not (bv and bv.Parent == root) then
+                flyCleanup(false)
+                bv = Instance.new("BodyVelocity")
+                bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                bv.Velocity = Vector3.zero
+                bv.Parent = root
+                bg = Instance.new("BodyGyro")
+                bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+                bg.P = 9e4
+                bg.D = 1e3
+                bg.CFrame = root.CFrame
+                bg.Parent = root
+            end
+            h.PlatformStand = true
+            local cf = workspace.CurrentCamera.CFrame
+            local md = h.MoveDirection
+            local vel = Vector3.zero
+            if md.Magnitude > 0.05 then
+                local fl = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+                local fr = Vector3.new(cf.RightVector.X, 0, cf.RightVector.Z)
+                local f = fl.Magnitude > 0.01 and md:Dot(fl.Unit) or 0
+                local r = fr.Magnitude > 0.01 and md:Dot(fr.Unit) or 0
+                vel = cf.LookVector * f + cf.RightVector * r
+            end
+            if not UserInputService:GetFocusedTextBox() then
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) or UserInputService:IsKeyDown(Enum.KeyCode.E) then
+                    vel += Vector3.yAxis
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+                    vel -= Vector3.yAxis
+                end
+            end
+            bv.Velocity = vel.Magnitude > 0.01 and vel.Unit * OPT.fly.v or Vector3.zero
+            local flat = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+            if flat.Magnitude > 0.01 then
+                bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat)
+            end
+        elseif bv or bg then
+            flyCleanup(true)
+        end
+    end)
+
+    local function gotoPlayer(plr)
+        pcall(function()
+            local target = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+            local mine = getRoot()
+            if target and mine then
+                mine.CFrame = target.CFrame * CFrame.new(0, 0, 3)
+                mine.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+    end
+
+    -- ===== UI =====
+    local WHITE = Color3.new(1, 1, 1)
+    local function label(parent, text, size, bold, color, props)
+        local l = Instance.new("TextLabel")
+        l.BackgroundTransparency = 1
+        l.Text = text
+        l.TextSize = size
+        l.TextColor3 = color
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        styleText(l, bold)
+        for k, v in pairs(props or {}) do l[k] = v end
+        l.Parent = parent
+        return l
+    end
+    local function rim(parent, t)
+        local s = Instance.new("UIStroke")
+        s.Color = WHITE
+        s.Transparency = t
+        s.Thickness = 1
+        s.Parent = parent
+        return s
+    end
+
+    local Opt = Instance.new("TextButton")
+    Opt.Name = "SaikiOptions"
+    Opt.AnchorPoint = Vector2.new(1, 0)
+    Opt.Position = UDim2.new(1, -16, 0, 16)
+    Opt.Size = UDim2.fromOffset(116, 38)
+    Opt.BackgroundColor3 = SAIKIUI.ink
+    Opt.BackgroundTransparency = 0.08
+    Opt.BorderSizePixel = 0
+    Opt.AutoButtonColor = false
+    Opt.Text = ""
+    Opt.ZIndex = 500
+    Opt.Parent = HOST.Gui
+    Instance.new("UICorner", Opt).CornerRadius = UDim.new(1, 0)
+    rim(Opt, 0.86)
+    label(Opt, "Options", 14, true, SAIKIUI.text, {
+        Position = UDim2.fromOffset(20, 0), Size = UDim2.new(1, -44, 1, 0), ZIndex = 501 })
+    local chev = label(Opt, "▾", 15, true, SAIKIUI.red, {
+        Position = UDim2.new(1, -30, 0, 0), Size = UDim2.fromOffset(18, 38),
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 501 })
+    HOST.OptButton = Opt
+
+    local Panel = Instance.new("CanvasGroup")
+    Panel.Name = "SaikiOptionsPanel"
+    Panel.AnchorPoint = Vector2.new(1, 0)
+    Panel.Position = UDim2.new(1, -16, 0, 62)
+    Panel.Size = UDim2.fromOffset(276, 0)
+    Panel.AutomaticSize = Enum.AutomaticSize.Y
+    Panel.BackgroundColor3 = SAIKIUI.ink
+    Panel.BackgroundTransparency = 0.06
+    Panel.BorderSizePixel = 0
+    Panel.GroupTransparency = 1
+    Panel.Visible = false
+    Panel.ZIndex = 498
+    Panel.Parent = HOST.Gui
+    Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 20)
+    rim(Panel, 0.86)
+    local panelScale = Instance.new("UIScale")
+    panelScale.Scale = 0.92
+    panelScale.Parent = Panel
+    local pad = Instance.new("UIPadding", Panel)
+    pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 12), UDim.new(0, 12)
+    pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+    local list = Instance.new("UIListLayout", Panel)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Padding = UDim.new(0, 8)
+    HOST.OptPanel = Panel
+
+    -- hold a stepper button to keep stepping
+    local function repeater(btn, fn)
+        local held = 0
+        btn.InputBegan:Connect(function(i)
+            if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+            held += 1
+            local mine = held
+            fn()
+            task.delay(0.35, function()
+                while held == mine and btn.Parent do
+                    fn()
+                    task.wait(0.06)
+                end
+            end)
+        end)
+        btn.InputEnded:Connect(function() held += 1 end)
+        btn.MouseLeave:Connect(function() held += 1 end)
+    end
+
+    local ON_COL, KNOB_DARK = Color3.fromRGB(242, 242, 244), Color3.fromRGB(18, 18, 20)
+    local function makeRow(order, name, key)
+        local o = OPT[key]
+        local row = Instance.new("Frame")
+        row.Name = "Row_" .. name
+        row.LayoutOrder = order
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 36)
+        row.Parent = Panel
+        label(row, name, 13, true, SAIKIUI.text, { Size = UDim2.fromOffset(52, 36) })
+
+        local function stepBtn(txt, x)
+            local b = Instance.new("TextButton")
+            b.AutoButtonColor = false
+            b.BackgroundColor3 = WHITE
+            b.BackgroundTransparency = 0.92
+            b.BorderSizePixel = 0
+            b.Text = txt
+            b.TextSize = 16
+            b.TextColor3 = SAIKIUI.text
+            b.Position = UDim2.fromOffset(x, 5)
+            b.Size = UDim2.fromOffset(26, 26)
+            styleText(b, true)
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
+            b.Parent = row
+            return b
+        end
+        local minus = stepBtn("−", 58)
+        local val = label(row, tostring(o.v), 13, true, SAIKIUI.text, {
+            Position = UDim2.fromOffset(86, 0), Size = UDim2.fromOffset(42, 36), TextXAlignment = Enum.TextXAlignment.Center })
+        local plus = stepBtn("+", 130)
+        local function change(d)
+            o.v = math.clamp(o.v + d * o.step, o.min, o.max)
+            val.Text = tostring(o.v)
+        end
+        repeater(minus, function() change(-1) end)
+        repeater(plus, function() change(1) end)
+
+        local track = Instance.new("TextButton")
+        track.AnchorPoint = Vector2.new(1, 0.5)
+        track.Position = UDim2.new(1, 0, 0.5, 0)
+        track.Size = UDim2.fromOffset(44, 24)
+        track.AutoButtonColor = false
+        track.Text = ""
+        track.BorderSizePixel = 0
+        track.BackgroundColor3 = WHITE
+        track.BackgroundTransparency = 0.88
+        track.Parent = row
+        Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+        local knob = Instance.new("Frame")
+        knob.AnchorPoint = Vector2.new(0, 0.5)
+        knob.Position = UDim2.new(0, 3, 0.5, 0)
+        knob.Size = UDim2.fromOffset(18, 18)
+        knob.BackgroundColor3 = SAIKIUI.mut
+        knob.BorderSizePixel = 0
+        knob.Parent = track
+        Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+        track.Activated:Connect(function()
+            o.on = not o.on
+            local on = o.on
+            local info = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+            TweenService:Create(track, info, {
+                BackgroundColor3 = on and ON_COL or WHITE, BackgroundTransparency = on and 0 or 0.88 }):Play()
+            TweenService:Create(knob, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0, on and 23 or 3, 0.5, 0), BackgroundColor3 = on and KNOB_DARK or SAIKIUI.mut }):Play()
+        end)
+    end
+    makeRow(1, "Speed", "speed")
+    makeRow(2, "Jump", "jump")
+    makeRow(3, "Fly", "fly")
+
+    label(Panel, "Go to player", 12, true, SAIKIUI.mut, { LayoutOrder = 4, Size = UDim2.new(1, 0, 0, 16) })
+    local plist = Instance.new("ScrollingFrame")
+    plist.LayoutOrder = 5
+    plist.Size = UDim2.new(1, 0, 0, 132)
+    plist.BackgroundColor3 = WHITE
+    plist.BackgroundTransparency = 0.95
+    plist.BorderSizePixel = 0
+    plist.ScrollBarThickness = 2
+    plist.ScrollBarImageColor3 = WHITE
+    plist.ScrollBarImageTransparency = 0.6
+    plist.ScrollingDirection = Enum.ScrollingDirection.Y
+    plist.CanvasSize = UDim2.fromOffset(0, 0)
+    plist.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    plist.Parent = Panel
+    Instance.new("UICorner", plist).CornerRadius = UDim.new(0, 12)
+    local lp = Instance.new("UIPadding", plist)
+    lp.PaddingTop, lp.PaddingBottom, lp.PaddingLeft, lp.PaddingRight = UDim.new(0, 4), UDim.new(0, 4), UDim.new(0, 4), UDim.new(0, 4)
+    local ll = Instance.new("UIListLayout", plist)
+    ll.SortOrder = Enum.SortOrder.LayoutOrder
+    ll.Padding = UDim.new(0, 3)
+
+    local function refreshPlayers()
+        for _, c in ipairs(plist:GetChildren()) do
+            if c:IsA("GuiObject") then c:Destroy() end
+        end
+        local others = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then others[#others + 1] = p end
+        end
+        table.sort(others, function(a, b) return a.DisplayName:lower() < b.DisplayName:lower() end)
+        if #others == 0 then
+            label(plist, "No other players", 12, false, SAIKIUI.mut, {
+                Size = UDim2.new(1, 0, 0, 30), TextXAlignment = Enum.TextXAlignment.Center })
+            return
+        end
+        for i, p in ipairs(others) do
+            local b = Instance.new("TextButton")
+            b.LayoutOrder = i
+            b.Size = UDim2.new(1, 0, 0, 30)
+            b.BackgroundColor3 = WHITE
+            b.BackgroundTransparency = 1
+            b.BorderSizePixel = 0
+            b.AutoButtonColor = false
+            b.TextSize = 12
+            b.TextColor3 = SAIKIUI.text
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.TextTruncate = Enum.TextTruncate.AtEnd
+            b.Text = p.DisplayName == p.Name and p.Name or (p.DisplayName .. "  @" .. p.Name)
+            styleText(b, false)
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
+            local bp = Instance.new("UIPadding", b)
+            bp.PaddingLeft, bp.PaddingRight = UDim.new(0, 10), UDim.new(0, 10)
+            b.Parent = plist
+            b.Activated:Connect(function() gotoPlayer(p) end)
+        end
+    end
+    Players.PlayerAdded:Connect(function() task.defer(refreshPlayers) end)
+    Players.PlayerRemoving:Connect(function() task.defer(refreshPlayers) end)
+    refreshPlayers()
+
+    -- open / close with the same pop animation as the sheet
+    local open, popToken = false, 0
+    Opt.Activated:Connect(function()
+        open = not open
+        popToken += 1
+        local mine = popToken
+        chev.Text = open and "▴" or "▾"
+        if open then
+            refreshPlayers()
+            Panel.Visible = true
+            TweenService:Create(Panel, TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
+            TweenService:Create(panelScale, TweenInfo.new(0.36, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+        else
+            TweenService:Create(Panel, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { GroupTransparency = 1 }):Play()
+            TweenService:Create(panelScale, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Scale = 0.92 }):Play()
+            task.delay(0.22, function()
+                if mine == popToken and not open then Panel.Visible = false end
+            end)
+        end
+    end)
+    if FX_ENABLED then pcall(FX.glow, Opt, 0.9, 0.8) end
+end
+
 local visible = true
 local hiddenByToggle = {}
 function HOST.SetVisible(v)
@@ -828,7 +1185,8 @@ function HOST.SetVisible(v)
     if not v then
         table.clear(hiddenByToggle)
         for _, child in ipairs(HOST.Gui:GetChildren()) do
-            if child ~= Toggle and child ~= HOST.Sheet and child:IsA("GuiObject") and child.Visible then
+            if child ~= Toggle and child ~= HOST.Sheet and child ~= HOST.OptButton and child ~= HOST.OptPanel
+                and child:IsA("GuiObject") and child.Visible then
                 hiddenByToggle[child] = true
                 child.Visible = false
             end
