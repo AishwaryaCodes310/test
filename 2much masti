@@ -728,6 +728,87 @@ function FX.gradientText(label, speed)
     return grad
 end
 
+-- while the sheet is open (Novoline): game + Roblox GUI hidden, background darkened, FOV widened.
+-- Everything is put back exactly as it was when the sheet is hidden.
+local Env = { on = false }
+HOST.Env = Env
+do
+    local StarterGui = game:GetService("StarterGui")
+    local DIM_T, FOV_ADD = 0.6, 15 -- background transparency while open / extra field of view
+    local dim = Instance.new("Frame")
+    dim.Name = "SaikiDim"
+    dim.BackgroundColor3 = Color3.new(0, 0, 0)
+    dim.BackgroundTransparency = 1
+    dim.BorderSizePixel = 0
+    dim.Size = UDim2.fromScale(1, 1)
+    dim.ZIndex = 0
+    dim.Active = false
+    pcall(function() dim.Interactable = false end)
+    dim.Parent = HOST.Gui
+    HOST.Dim = dim
+
+    local savedCore, savedGuis, savedFov, childConn = {}, {}, nil, nil
+    local INFO_ENV = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+    local function hideGui(g)
+        if g:IsA("ScreenGui") and g ~= HOST.Gui and g.Enabled then
+            savedGuis[g] = true
+            g.Enabled = false
+        end
+    end
+
+    function Env.apply()
+        if Env.on then return end
+        Env.on = true
+        fxPlay(dim, INFO_ENV, { BackgroundTransparency = DIM_T })
+        -- Roblox's own GUI (leaderboard, backpack, chat, health...)
+        table.clear(savedCore)
+        for _, t in ipairs(Enum.CoreGuiType:GetEnumItems()) do
+            if t ~= Enum.CoreGuiType.All then
+                local ok, en = pcall(function() return StarterGui:GetCoreGuiEnabled(t) end)
+                if ok and en then savedCore[#savedCore + 1] = t end
+            end
+        end
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
+        -- the game's own GUIs (also ones that appear while we are open)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, g in ipairs(pg:GetChildren()) do hideGui(g) end
+            childConn = pg.ChildAdded:Connect(function(g) task.defer(hideGui, g) end)
+        end
+        -- wider field of view
+        local cam = workspace.CurrentCamera
+        if cam then
+            savedFov = savedFov or cam.FieldOfView
+            fxPlay(cam, INFO_ENV, { FieldOfView = math.min(120, savedFov + FOV_ADD) })
+        end
+    end
+
+    function Env.restore()
+        if not Env.on then return end
+        Env.on = false
+        fxPlay(dim, INFO_ENV, { BackgroundTransparency = 1 })
+        if childConn then
+            childConn:Disconnect()
+            childConn = nil
+        end
+        for g in pairs(savedGuis) do
+            if g.Parent then g.Enabled = true end
+        end
+        table.clear(savedGuis)
+        for _, t in ipairs(savedCore) do
+            pcall(function() StarterGui:SetCoreGuiEnabled(t, true) end)
+        end
+        table.clear(savedCore)
+        local cam = workspace.CurrentCamera
+        if cam and savedFov then fxPlay(cam, INFO_ENV, { FieldOfView = savedFov }) end
+        task.delay(0.5, function()
+            if not Env.on then savedFov = nil end
+        end)
+    end
+    HOST.Gui.Destroying:Connect(function() Env.restore() end) -- script removed while open: undo too
+end
+
 -- pop-in / pop-out of the whole sheet (Novoline: pill.popIn / pill.popOut)
 do
     local sheetScale = Instance.new("UIScale")
@@ -1164,11 +1245,11 @@ local visible = true
 local hiddenByToggle = {}
 function HOST.SetVisible(v)
     visible = v
-    if v then FX.popIn() else FX.popOut() end
+    if v then FX.popIn() Env.apply() else FX.popOut() Env.restore() end
     if not v then
         table.clear(hiddenByToggle)
         for _, child in ipairs(HOST.Gui:GetChildren()) do
-            if child ~= Toggle and child ~= HOST.Sheet and child:IsA("GuiObject") and child.Visible then
+            if child ~= Toggle and child ~= HOST.Sheet and child ~= HOST.Dim and child:IsA("GuiObject") and child.Visible then
                 hiddenByToggle[child] = true
                 child.Visible = false
             end
@@ -1227,6 +1308,7 @@ function HOST.Start()
     HOST.Relayout()
     HOST.JumpSection(1, true)
     FX.popIn(true)
+    Env.apply()
 end
 
 
