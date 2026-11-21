@@ -831,9 +831,9 @@ end
 local HOST_OPTIONS = true
 if HOST_OPTIONS then
     local OPT = {
-        speed = { on = false, v = 50, min = 16, max = 250, step = 2 },
-        jump = { on = false, v = 100, min = 50, max = 350, step = 5 },
-        fly = { on = false, v = 60, min = 20, max = 300, step = 5 },
+        speed = { on = false, v = 50, min = 16, max = 1000, step = 2 },
+        jump = { on = false, v = 100, min = 50, max = 1000, step = 5 },
+        fly = { on = false, v = 60, min = 20, max = 1000, step = 5 },
     }
     local function getHum()
         local c = LocalPlayer.Character
@@ -959,7 +959,7 @@ if HOST_OPTIONS then
         local barScale = mk("UIScale", {}, Bar)
         -- One fixed, compact size that only depends on the screen width. It is NOT measured from the
         -- layout (measuring a scaled layout feeds back into itself and made the bar flash big/small).
-        local NAT_W = 680 -- approximate unscaled width of the whole row
+        local NAT_W = 740 -- approximate unscaled width of the whole row
         local function fit()
             local gw = HOST.Gui.AbsoluteSize.X
             if gw <= 0 then
@@ -1031,11 +1031,19 @@ if HOST_OPTIONS then
             nameBtn.AutomaticSize = Enum.AutomaticSize.X
             mk("UIPadding", { PaddingLeft = UDim.new(0, 11), PaddingRight = UDim.new(0, 11) }, nameBtn)
             setOn(nameBtn, o.on, true)
-            local minus = button(cap, 2, "−", 22, 15)
-            local val = mk("TextLabel", {
-                LayoutOrder = 3, Size = UDim2.fromOffset(30, 26), BackgroundTransparency = 1, Text = tostring(o.v),
-                TextSize = 12, TextColor3 = SAIKIUI.text, ZIndex = 61 }, cap)
+            local minus = button(cap, 2, "-", 22, 15)
+            -- click the number and type your own value
+            local val = mk("TextBox", {
+                LayoutOrder = 3, Size = UDim2.fromOffset(38, 22), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94,
+                BorderSizePixel = 0, Text = tostring(o.v), TextSize = 12, TextColor3 = SAIKIUI.text, ClearTextOnFocus = true,
+                PlaceholderText = "", ZIndex = 61 }, cap)
             text(val, true)
+            round(val, UDim.new(0, 8))
+            val.FocusLost:Connect(function()
+                local n = tonumber(val.Text)
+                if n then o.v = math.clamp(math.floor(n + 0.5), o.min, o.max) end
+                val.Text = tostring(o.v)
+            end)
             local plus = button(cap, 4, "+", 22, 15)
             for _, b in ipairs({ minus, plus }) do
                 b.TextColor3 = SAIKIUI.text
@@ -1059,17 +1067,22 @@ if HOST_OPTIONS then
         -- Go to player:  [ <  name  >  Go ]
         do
             local cap = capsule(4)
-            local prev = button(cap, 1, "◂", 22, 13)
+            local prev = button(cap, 1, "<", 22, 14)
             local nameLbl = mk("TextLabel", {
                 LayoutOrder = 2, Size = UDim2.fromOffset(104, 26), BackgroundTransparency = 1, Text = "No players",
                 TextSize = 12, TextColor3 = SAIKIUI.text, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 61 }, cap)
             text(nameLbl, true)
-            local nxt = button(cap, 3, "▸", 22, 13)
+            local nxt = button(cap, 3, ">", 22, 14)
             local go = button(cap, 4, "Go", 0, 12)
             go.Size = UDim2.new(0, 0, 0, 26)
             go.AutomaticSize = Enum.AutomaticSize.X
             mk("UIPadding", { PaddingLeft = UDim.new(0, 11), PaddingRight = UDim.new(0, 11) }, go)
             setOn(go, true, true)
+            local viewBtn = button(cap, 5, "View", 0, 12)
+            viewBtn.Size = UDim2.new(0, 0, 0, 26)
+            viewBtn.AutomaticSize = Enum.AutomaticSize.X
+            mk("UIPadding", { PaddingLeft = UDim.new(0, 11), PaddingRight = UDim.new(0, 11) }, viewBtn)
+            setOn(viewBtn, false, true)
             for _, b in ipairs({ prev, nxt }) do
                 b.TextColor3 = SAIKIUI.text
                 b.BackgroundTransparency = 0.92
@@ -1090,10 +1103,46 @@ if HOST_OPTIONS then
                 if not sel and #others > 0 then sel = 1 end
                 nameLbl.Text = sel and others[sel].DisplayName or "No players"
             end
+            -- View: the camera follows the selected player (press again to go back to yourself)
+            local viewing = nil
+            local function stopView()
+                viewing = nil
+                setOn(viewBtn, false)
+                local h, cam = getHum(), workspace.CurrentCamera
+                if h and cam then cam.CameraSubject = h end
+            end
+            local function startView(p)
+                local ch = p.Character
+                local h = ch and ch:FindFirstChildOfClass("Humanoid")
+                local cam = workspace.CurrentCamera
+                if not (h and cam) then return false end
+                cam.CameraSubject = h
+                viewing = p
+                setOn(viewBtn, true)
+                return true
+            end
+            RunService.Heartbeat:Connect(function()
+                if not viewing then return end
+                if not viewing.Parent then
+                    stopView()
+                    return
+                end
+                local h = viewing.Character and viewing.Character:FindFirstChildOfClass("Humanoid")
+                local cam = workspace.CurrentCamera
+                if h and cam and cam.CameraSubject ~= h then cam.CameraSubject = h end
+            end)
+            viewBtn.Activated:Connect(function()
+                if viewing then
+                    stopView()
+                elseif sel and others[sel] then
+                    startView(others[sel])
+                end
+            end)
             local function step(d)
                 if #others == 0 then return end
                 sel = ((sel or 1) - 1 + d) % #others + 1
                 nameLbl.Text = others[sel].DisplayName
+                if viewing then startView(others[sel]) end
             end
             prev.Activated:Connect(function() step(-1) end)
             nxt.Activated:Connect(function() step(1) end)
