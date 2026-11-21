@@ -28,11 +28,11 @@ for _, container in ipairs({PARENT, LocalPlayer:WaitForChild("PlayerGui"), CoreG
 end
 
 local SAIKIUI = {
-    ink = Color3.fromRGB(8, 8, 10),
-    card = Color3.fromRGB(12, 12, 14),
-    text = Color3.fromRGB(245, 245, 248),
-    mut = Color3.fromRGB(140, 142, 152),
-    red = Color3.fromRGB(220, 38, 65),
+    ink = Color3.fromRGB(8, 8, 9),
+    card = Color3.fromRGB(8, 8, 9),
+    text = Color3.fromRGB(244, 244, 244),
+    mut = Color3.fromRGB(150, 150, 156),
+    red = Color3.fromRGB(239, 68, 68),
 }
 
 local function montserrat(weightName)
@@ -244,7 +244,10 @@ function HOST.Relayout()
                 c.scale.Scale = s
                 if c.corner then
                     local pill = type(c.h) == "number" and c.h <= 64
-                    c.corner.CornerRadius = pill and UDim.new(0.5, 0) or UDim.new(0, math.floor((c.r or 18) * s + 0.5))
+                    local rad = pill and UDim.new(0, math.floor(h / 2)) or UDim.new(0, math.floor((c.r or 18) * s + 0.5))
+                    c.corner.CornerRadius = rad
+                    if c.shineCorner then c.shineCorner.CornerRadius = rad end
+                    if c.shine then c.shine.Size = UDim2.new(1, 0, 0, pill and math.floor(h) or math.floor(46 * s)) end
                 end
                 y += h + GAP_Y * s
             end
@@ -290,8 +293,8 @@ function HOST.Column(section, width, valign)
     function col.Card(h, name, plain)
         local card = Instance.new("Frame")
         card.Name = name or "Card"
-        card.BackgroundColor3 = Color3.fromRGB(25, 25, 30) -- the gradient below darkens it towards the bottom
-        card.BackgroundTransparency = 0.08
+        card.BackgroundColor3 = Color3.new(1, 1, 1) -- the body gradient below gives the colour
+        card.BackgroundTransparency = 0.05
         card.BorderSizePixel = 0
         card.ClipsDescendants = not plain
         card.ZIndex = 6
@@ -299,11 +302,17 @@ function HOST.Column(section, width, valign)
         local cornerObj = Instance.new("UICorner", card)
         cornerObj.CornerRadius = UDim.new(0, 18)
         local shade = Instance.new("UIGradient", card)
+        shade.Name = "Body"
         shade.Rotation = 90
-        shade.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(122, 122, 130))
+        shade.Color = ColorSequence.new(Color3.fromRGB(8, 8, 9), Color3.fromRGB(26, 26, 28))
         local st = Instance.new("UIStroke", card)
         st.Color = Color3.new(1, 1, 1)
-        st.Transparency = 0.88
+        st.Transparency = 0
+        local rimGrad = Instance.new("UIGradient", st)
+        rimGrad.Rotation = 90
+        rimGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.84), NumberSequenceKeypoint.new(0.5, 0.92), NumberSequenceKeypoint.new(1, 0.78),
+        })
         st.Thickness = 1
         local stage = Instance.new("Frame")
         stage.Name = "Stage"
@@ -313,7 +322,33 @@ function HOST.Column(section, width, valign)
         stage.Parent = card
         local us = Instance.new("UIScale")
         us.Parent = stage
-        local c = { frame = card, stage = stage, scale = us, h = h, corner = cornerObj, r = CARD_R[name] or 18 }
+        -- soft white shine along the top edge (clipped to the card's rounded corners)
+        local shine = Instance.new("CanvasGroup")
+        shine.Name = "SurfaceShine"
+        shine.BackgroundTransparency = 1
+        shine.BorderSizePixel = 0
+        shine.Size = UDim2.new(1, 0, 0, 46)
+        shine.ZIndex = 3
+        shine.Active = false
+        pcall(function() shine.Interactable = false end)
+        shine.Parent = card
+        local shineCorner = Instance.new("UICorner", shine)
+        local shineFill = Instance.new("Frame")
+        shineFill.Name = "Fill"
+        shineFill.Size = UDim2.fromScale(1, 1)
+        shineFill.BackgroundColor3 = Color3.new(1, 1, 1)
+        shineFill.BackgroundTransparency = 0.84
+        shineFill.BorderSizePixel = 0
+        shineFill.Active = false
+        shineFill.Parent = shine
+        local shineGrad = Instance.new("UIGradient", shineFill)
+        shineGrad.Rotation = 90
+        shineGrad.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.14), NumberSequenceKeypoint.new(0.3, 0.62),
+            NumberSequenceKeypoint.new(0.62, 0.94), NumberSequenceKeypoint.new(1, 1),
+        })
+        local c = { frame = card, stage = stage, scale = us, h = h, corner = cornerObj, r = CARD_R[name] or 18,
+            shine = shine, shineCorner = shineCorner }
         col.cards[#col.cards + 1] = c
         HOST.Relayout()
         return stage, c
@@ -432,7 +467,7 @@ for i, it in ipairs(DOCK_ITEMS) do
     b.LayoutOrder = i
     b.AutomaticSize = Enum.AutomaticSize.X
     b.Size = UDim2.new(0, 0, 1, -10)
-    b.BackgroundColor3 = Color3.new(1, 1, 1)
+    b.BackgroundColor3 = Color3.fromRGB(242, 242, 244) -- Novoline pill (follows the theme's accent)
     b.BackgroundTransparency = 1
     b.BorderSizePixel = 0
     b.AutoButtonColor = false
@@ -486,8 +521,8 @@ local function paintDock()
     if maxX > 0 and pos >= maxX - 4 and lastShown then active = lastShown end
     for i, b in ipairs(dockBtns) do
         local on = (i == active)
-        b.BackgroundTransparency = on and 0.86 or 1
-        b.TextColor3 = on and SAIKIUI.text or SAIKIUI.mut
+        b.BackgroundTransparency = on and 0 or 1
+        b.TextColor3 = on and Color3.fromRGB(18, 18, 20) or SAIKIUI.mut
     end
 end
 HOST.OnScroll[#HOST.OnScroll + 1] = paintDock
@@ -740,10 +775,10 @@ local ME = tostring(LP.UserId)
 ----------------------------------------------------------------- theme + helpers
 local WHITE = Color3.new(1, 1, 1)
 local T = {
-	bg = Color3.fromRGB(14, 16, 24), bgT = 0.2,
-	text = Color3.fromRGB(240, 242, 250), mut = Color3.fromRGB(150, 156, 175),
-	accA = Color3.fromRGB(220, 38, 65), accB = Color3.fromRGB(190, 194, 202),
-	red = Color3.fromRGB(255, 82, 110),
+	bg = Color3.fromRGB(16, 16, 16), bgT = 0.12,
+	text = Color3.fromRGB(244, 244, 244), mut = Color3.fromRGB(160, 160, 160),
+	accA = Color3.fromRGB(242, 242, 244), accB = Color3.fromRGB(196, 196, 202),
+	red = Color3.fromRGB(239, 68, 68),
 	font = Enum.Font.GothamMedium, fontB = Enum.Font.GothamBold,
 }
 
@@ -1457,7 +1492,7 @@ local function ChatView(parent, onSend, cooldown, placeholder, onReact)
 				BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, Parent = par },
 				{ corner(8), pad(4, 8), new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }) })
 			new("TextLabel", { Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, BackgroundTransparency = 1,
-				Text = m.reply.n, Font = T.fontB, TextSize = 11, TextColor3 = mine and WHITE or T.accB, LayoutOrder = 1, Parent = q })
+				Text = m.reply.n, Font = T.fontB, TextSize = 11, TextColor3 = mine and Color3.fromRGB(18, 18, 20) or T.accB, LayoutOrder = 1, Parent = q })
 			new("TextLabel", { Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, BackgroundTransparency = 1,
 				Text = m.reply.t, TextWrapped = true, Font = T.font, TextSize = 12, TextColor3 = T.text,
 				TextTransparency = 0.25, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = q },
@@ -1490,7 +1525,7 @@ local function ChatView(parent, onSend, cooldown, placeholder, onReact)
 			else stroke(0.9).Parent = target end
 			if m.reply then makeQuote(target, 1) end
 			new("TextLabel", { Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, BackgroundTransparency = 1,
-				Text = m.text, TextWrapped = true, RichText = false, Font = T.font, TextSize = 15, TextColor3 = T.text,
+				Text = m.text, TextWrapped = true, RichText = false, Font = T.font, TextSize = 15, TextColor3 = mine and Color3.fromRGB(18, 18, 20) or T.text,
 				TextXAlignment = mine and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = target },
 				{ new("UISizeConstraint", { MaxSize = Vector2.new(maxW, math.huge) }) })
 		end
@@ -3569,39 +3604,37 @@ local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
 local DISCORD, DISCORD_CODE = "https://discord.gg/63eEChZ6YU", "63eEChZ6YU"
-local INK2 = Color3.fromRGB(15, 17, 25)
+local INK2 = Color3.fromRGB(18, 18, 20)
 
 ---------------------------------------------------------------- saved settings
 local FILE = H.cache .. "/settings_" .. H.me .. ".json"
 local MAXMSG = CONFIG.MAX_MESSAGES
 local WHITEC = Color3.new(1, 1, 1)
 local function mk(bg, accA, accB, light)
-	local t = { bg = bg, accA = accA, accB = accB, text = Color3.fromRGB(240, 242, 250), mut = Color3.fromRGB(150, 156, 175), ov = WHITEC, bgT = 0.2 }
+	local t = { bg = bg, accA = accA, accB = accB, text = Color3.fromRGB(244, 244, 244), mut = Color3.fromRGB(160, 160, 160), ov = WHITEC, bgT = 0.12 }
 	if light then for k, v in pairs(light) do t[k] = v end end
 	return t
 end
+-- Novoline looks: Modern + Fluent are its two neutral dark themes, the rest are its colour tints
+-- (Pina blue and the tile colours: orange, red, cyan, purple, green). Accents are bright, so text on them is dark.
 local THEMES = {
-	Saiki = mk(Color3.fromRGB(12, 12, 14), Color3.fromRGB(220, 38, 65), Color3.fromRGB(190, 194, 202), { mut = Color3.fromRGB(140, 142, 152), bgT = 0.12 }),
-	Dark   = mk(Color3.fromRGB(14, 16, 24), Color3.fromRGB(124, 92, 255), Color3.fromRGB(64, 180, 255)),
-	AMOLED = mk(Color3.fromRGB(0, 0, 0),    Color3.fromRGB(140, 100, 255), Color3.fromRGB(70, 190, 255)),
-	Ocean  = mk(Color3.fromRGB(8, 20, 32),  Color3.fromRGB(0, 140, 255),   Color3.fromRGB(0, 220, 200)),
-	Sunset = mk(Color3.fromRGB(26, 14, 20), Color3.fromRGB(255, 100, 110), Color3.fromRGB(255, 176, 64)),
-	Forest = mk(Color3.fromRGB(10, 22, 16), Color3.fromRGB(60, 190, 120),  Color3.fromRGB(150, 225, 80)),
-	-- soft pink, solid (opaque) window, dark text
-	Lovely = mk(Color3.fromRGB(255, 233, 241), Color3.fromRGB(255, 98, 158), Color3.fromRGB(176, 108, 255),
-		{ text = Color3.fromRGB(62, 30, 52), mut = Color3.fromRGB(160, 104, 134), ov = Color3.fromRGB(214, 60, 120), bgT = 0 }),
-	-- premium cream + gold, solid (opaque) window, dark brown text
-	Gold   = mk(Color3.fromRGB(255, 246, 214), Color3.fromRGB(230, 148, 0), Color3.fromRGB(255, 198, 36),
-		{ text = Color3.fromRGB(64, 45, 8), mut = Color3.fromRGB(150, 118, 42), ov = Color3.fromRGB(176, 120, 0), bgT = 0 }),
+	Modern  = mk(Color3.fromRGB(16, 16, 16), Color3.fromRGB(242, 242, 244), Color3.fromRGB(196, 196, 202)),
+	Fluent  = mk(Color3.fromRGB(23, 23, 23), Color3.fromRGB(238, 238, 238), Color3.fromRGB(176, 176, 182), { text = Color3.fromRGB(244, 244, 246), mut = Color3.fromRGB(150, 150, 156) }),
+	Pina    = mk(Color3.fromRGB(13, 16, 24), Color3.fromRGB(56, 116, 222),  Color3.fromRGB(96, 160, 255),  { text = Color3.fromRGB(240, 244, 252), mut = Color3.fromRGB(146, 156, 176) }),
+	Ember   = mk(Color3.fromRGB(20, 14, 10), Color3.fromRGB(255, 156, 64),  Color3.fromRGB(255, 200, 130), { text = Color3.fromRGB(250, 244, 238), mut = Color3.fromRGB(170, 154, 140) }),
+	Crimson = mk(Color3.fromRGB(20, 10, 12), Color3.fromRGB(255, 96, 102),  Color3.fromRGB(255, 150, 154), { text = Color3.fromRGB(250, 240, 241), mut = Color3.fromRGB(168, 146, 148) }),
+	Aqua    = mk(Color3.fromRGB(9, 17, 21),  Color3.fromRGB(64, 186, 255),  Color3.fromRGB(130, 214, 255), { text = Color3.fromRGB(238, 248, 252), mut = Color3.fromRGB(140, 164, 176) }),
+	Violet  = mk(Color3.fromRGB(17, 13, 24), Color3.fromRGB(168, 120, 255), Color3.fromRGB(206, 170, 255), { text = Color3.fromRGB(246, 242, 252), mut = Color3.fromRGB(158, 148, 178) }),
+	Mint    = mk(Color3.fromRGB(10, 19, 14), Color3.fromRGB(52, 199, 89),   Color3.fromRGB(140, 228, 160), { text = Color3.fromRGB(240, 250, 243), mut = Color3.fromRGB(140, 168, 148) }),
 }
-local ORDER = { "Saiki", "Dark", "AMOLED", "Ocean", "Sunset", "Forest", "Lovely", "Gold" }
+local ORDER = { "Modern", "Fluent", "Pina", "Ember", "Crimson", "Aqua", "Violet", "Mint" }
 if T.ov == nil then T.ov = WHITEC end
-local V = { theme = "Saiki", anim = true, aura = true, notif = true, guiMul = 1, anchored = true, ox = 0, oy = 0 }
+local V = { theme = "Modern", anim = true, aura = true, notif = true, guiMul = 1, anchored = true, ox = 0, oy = 0 }
 pcall(function()
 	if isfile and readfile and isfile(FILE) then
 		local d = HttpService:JSONDecode(readfile(FILE))
 		if type(d) == "table" then
-			if THEMES[d.theme] and d.theme ~= "Dark" then V.theme = d.theme end
+			if THEMES[d.theme] and d.theme ~= "Modern" then V.theme = d.theme end
 			if type(d.anim) == "boolean" then V.anim = d.anim end
 			if type(d.aura) == "boolean" then V.aura = d.aura end
 			if type(d.notif) == "boolean" then V.notif = d.notif end
@@ -3745,7 +3778,7 @@ toggleRow("Notifications",
 useCat(3)
 local setTheme
 do
-	local text = "Changes the window colours with a smooth fade. Dark is the default. AMOLED is pure black (great on OLED screens). Lovely is a soft pink and Gold a premium cream-and-gold look; both have a solid, see-through-free window."
+	local text = "Changes the window colours with a smooth fade. Modern is the default and Fluent a slightly lighter dark. Pina, Ember, Crimson, Aqua, Violet and Mint add a colour tint."
 	local dh = textH(text, 12, WIDE)
 	local c = card(33 + dh + 10 + 78 + 12)
 	local y = title(c, "Theme")
@@ -4119,7 +4152,7 @@ end
 ---------------------------------------------------------------- apply saved settings
 T.anim, T.aura, T.guiMul, T.notif = V.anim, V.aura, V.guiMul, V.notif
 if not V.anim then CONFIG.MAX_MESSAGES = 40 end
-if V.theme ~= "Dark" then setTheme(V.theme, true) end
+if V.theme ~= "Modern" then setTheme(V.theme, true) end
 H.expose(V)
 ]==])
 end)()
@@ -4559,11 +4592,11 @@ end
 
 ----------------------------------------------------------------- UI basics
 local C = {
-	bg = Color3.fromRGB(12, 12, 14), bg2 = Color3.fromRGB(16, 16, 19), panel = Color3.fromRGB(20, 20, 23), field = Color3.fromRGB(28, 28, 32),
-	btn = Color3.fromRGB(34, 34, 39), text = Color3.fromRGB(240, 240, 244), sub = Color3.fromRGB(145, 145, 156),
-	red = Color3.fromRGB(220, 38, 65),
+	bg = Color3.fromRGB(8, 8, 9), bg2 = Color3.fromRGB(16, 16, 16), panel = Color3.fromRGB(18, 18, 18), field = Color3.fromRGB(28, 28, 28),
+	btn = Color3.fromRGB(40, 40, 40), text = Color3.fromRGB(244, 244, 244), sub = Color3.fromRGB(150, 150, 156),
+	red = Color3.fromRGB(239, 68, 68),
 }
-local rgb = Color3.fromRGB(220, 38, 65)
+local rgb = Color3.fromRGB(242, 242, 244)
 local rgbObjs = {}
 local spinners = {}
 local function rgbify(inst, prop)
@@ -4779,9 +4812,9 @@ local SKY_META = {
 	if not HOST.Column then return end
 	local HttpService = game:GetService("HttpService")
 	local MarketplaceService = game:GetService("MarketplaceService")
-	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(15, 17, 25)
-	local TXT, MUT = Color3.fromRGB(245, 245, 248), Color3.fromRGB(140, 142, 152)
-	local GREEN = Color3.fromRGB(60, 200, 130)
+	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(18, 18, 20)
+	local TXT, MUT = Color3.fromRGB(244, 244, 244), Color3.fromRGB(150, 150, 156)
+	local GREEN = Color3.fromRGB(52, 199, 89)
 	local SEC_GFX, SEC_SKY = 2, 3
 	local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
 	local cols = {}
@@ -4816,7 +4849,7 @@ local SKY_META = {
 
 	------------------------------------------------------------- saved choices (accent colour + favourite skies)
 	local PREFS = "SaikiGFX_saiki.json"
-	local prefs = { accent = "Saiki", favs = {} }
+	local prefs = { accent = "Novoline", favs = {} }
 	pcall(function()
 		if isfile and readfile and isfile(PREFS) then
 			local d = HttpService:JSONDecode(readfile(PREFS))
@@ -4840,12 +4873,13 @@ local SKY_META = {
 
 	------------------------------------------------------------- accent colour (Style category)
 	local PALETTES = {
-		{ "Saiki", Color3.fromRGB(220, 38, 65) },
-		{ "Ocean", Color3.fromRGB(0, 140, 255) },
-		{ "Purple", Color3.fromRGB(140, 100, 255) },
-		{ "Rose", Color3.fromRGB(255, 98, 158) },
-		{ "Emerald", Color3.fromRGB(60, 190, 120) },
-		{ "Gold", Color3.fromRGB(230, 148, 0) },
+		{ "Novoline", Color3.fromRGB(226, 226, 226) },
+		{ "Pina", Color3.fromRGB(56, 116, 222) },
+		{ "Ember", Color3.fromRGB(255, 156, 64) },
+		{ "Crimson", Color3.fromRGB(255, 96, 102) },
+		{ "Aqua", Color3.fromRGB(64, 186, 255) },
+		{ "Violet", Color3.fromRGB(168, 120, 255) },
+		{ "Mint", Color3.fromRGB(52, 199, 89) },
 	}
 	local ACC = PALETTES[1][2]
 	for _, p in ipairs(PALETTES) do
@@ -5367,7 +5401,7 @@ local SKY_META = {
 			rc(btn, 12)
 			local ic = txt(btn, cd[1]:sub(1, 1), 11, true, INK, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 8, 0.5, 0), Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 0, BackgroundColor3 = WHITE, TextXAlignment = CENTER })
 			rc(ic, 7)
-			new("UIGradient", { Rotation = 20, Color = ColorSequence.new(WHITE, Color3.fromRGB(190, 194, 202)) }, ic)
+			new("UIGradient", { Rotation = 20, Color = ColorSequence.new(WHITE, Color3.fromRGB(196, 196, 202)) }, ic)
 			txt(btn, cd[1], 12, true, TXT, { Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -66, 1, 0) })
 			txt(btn, tostring(cd[3]), 11, false, MUT, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 0), Size = UDim2.new(0, 22, 1, 0), TextXAlignment = RIGHT })
 			catBtns[i] = btn
