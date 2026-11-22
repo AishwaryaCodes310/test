@@ -10,6 +10,369 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
+-- ===================== ACCESS GATE (added) =====================
+-- Only runs the script for: (a) players whose Roblox friends list contains Moosman99999 / Kabir_Priv / yorichii_566,
+-- or (b) players whose exact username is in allowedbyKb / allowedbykn. Identity is verified from several independent
+-- Roblox sources and tallied; any failed / contradicting / unverifiable result = unauthorized (fail closed).
+do
+	local HttpService = game:GetService("HttpService")
+	local RunService = game:GetService("RunService")
+	local GATE_REQ = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
+	local LP0 = LocalPlayer
+	local ALLOW_FRIENDS = { "Moosman99999", "Kabir_Priv", "yorichii_566" }
+	local ALLOW_LISTS = {
+		"https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/allowedbyKb",
+		"https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/allowedbykn",
+	}
+	local BG_URL = "https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/790592909607245608.jpg"
+	local DENIED_TEXT = "Script has been deleted or Removed for the timebeing [404 Source not found]"
+	local AGE_TOLERANCE_DAYS = 3
+
+	-- baseline taken before anything else can change it
+	local base = { name = LP0.Name, id = LP0.UserId, age = LP0.AccountAge }
+	local function lower(s) return string.lower(tostring(s)) end
+	local function tri(known, cond) if not known then return nil end return cond and true or false end
+
+	----------------------------------------------------------- http helpers
+	local function httpGet(url)
+		if not GATE_REQ then return nil end
+		local ok, res = pcall(GATE_REQ, { Url = url, Method = "GET" })
+		if not ok or type(res) ~= "table" then return nil end
+		local code = tonumber(res.StatusCode)
+		if (code and code ~= 200) or (not code and res.Success ~= true) then return nil end
+		if type(res.Body) ~= "string" then return nil end
+		return res.Body
+	end
+	local function decode(body)
+		if type(body) ~= "string" then return nil end
+		local ok, d = pcall(function() return HttpService:JSONDecode(body) end)
+		if ok and type(d) == "table" then return d end
+		return nil
+	end
+	local function jsonGet(url) return decode(httpGet(url)) end
+	local function jsonPost(url, tbl)
+		if not GATE_REQ then return nil end
+		local ok, res = pcall(GATE_REQ, { Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" },
+			Body = HttpService:JSONEncode(tbl) })
+		if not ok or type(res) ~= "table" then return nil end
+		local code = tonumber(res.StatusCode)
+		if (code and code ~= 200) or (not code and res.Success ~= true) then return nil end
+		return decode(res.Body)
+	end
+
+	----------------------------------------------------------- identity verification
+	-- local values must not have drifted, and Roblox's own player lookups must agree
+	local function localOk()
+		if type(base.id) ~= "number" or base.id <= 0 then return false end
+		if LP0.UserId ~= base.id or LP0.Name ~= base.name or LP0.AccountAge ~= base.age then return false end
+		if Players.LocalPlayer ~= LP0 then return false end
+		local ok1, p = pcall(function() return Players:GetPlayerByUserId(base.id) end)
+		if not ok1 or p ~= LP0 then return false end
+		local ok2, q = pcall(function() return Players:FindFirstChild(base.name) end)
+		if ok2 and q ~= LP0 then return false end
+		local n = 0
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl.UserId == base.id then n += 1 end
+		end
+		return n == 1
+	end
+
+	-- one round of checks: true = passed, false = contradicted, nil = couldn't check
+	local function identityRound()
+		local r = { fails = 0, passes = 0, web = 0, eng = 0 }
+		local function put(v, kind)
+			if v == true then
+				r.passes += 1
+				if kind then r[kind] += 1 end
+			elseif v == false then
+				r.fails += 1
+			end
+		end
+		local uid, nm = base.id, base.name
+		put(localOk())
+		-- engine: id -> name
+		local ok, n = pcall(function() return Players:GetNameFromUserIdAsync(uid) end)
+		put(tri(ok and type(n) == "string", type(n) == "string" and lower(n) == lower(nm)), "eng")
+		-- engine: name -> id
+		local ok2, id2 = pcall(function() return Players:GetUserIdFromNameAsync(nm) end)
+		put(tri(ok2 and type(id2) == "number", id2 == uid), "eng")
+		-- engine: UserService
+		local ok3, infos = pcall(function() return game:GetService("UserService"):GetUserInfosByUserIdsAsync({ uid }) end)
+		if ok3 and type(infos) == "table" and type(infos[1]) == "table" then
+			put(lower(infos[1].Username) == lower(nm) and tonumber(infos[1].Id) == uid, "eng")
+		end
+		-- web: users/{id} (id, name, account age)
+		local d = jsonGet("https://users.roblox.com/v1/users/" .. tostring(uid))
+		if d and d.id then
+			local good = tonumber(d.id) == uid and lower(d.name) == lower(nm)
+			if good then
+				local okT, dt = pcall(DateTime.fromIsoDate, tostring(d.created))
+				if okT and dt then
+					local days = math.floor((os.time() - dt.UnixTimestamp) / 86400)
+					if math.abs(days - base.age) > AGE_TOLERANCE_DAYS then good = false end
+				end
+			end
+			put(good, "web")
+		end
+		-- web: username -> id (reverse lookup)
+		local u = jsonPost("https://users.roblox.com/v1/usernames/users", { usernames = { nm }, excludeBannedUsers = false })
+		if u and type(u.data) == "table" and type(u.data[1]) == "table" then
+			put(tonumber(u.data[1].id) == uid and lower(u.data[1].name) == lower(nm), "web")
+		end
+		return r
+	end
+
+	-- tally: no contradictions, enough independent confirmations, at least one web + one engine source
+	local function verifyIdentity()
+		local strikes = 0
+		for _ = 1, 4 do
+			if not localOk() then return false end
+			local r = identityRound()
+			if r.fails > 0 then
+				strikes += 1
+				if strikes >= 2 then return false end
+			elseif r.passes >= 4 and r.web >= 1 and r.eng >= 1 then
+				return true
+			end
+			task.wait(2)
+		end
+		return false
+	end
+
+	----------------------------------------------------------- allow lists
+	local function parseList(body)
+		if type(body) ~= "string" or body == "" then return nil end
+		if lower(body):find("<html", 1, true) then return nil end
+		local set = {}
+		for line in body:gmatch("[^\r\n]+") do
+			if line:sub(1, 1) ~= "#" and line:sub(1, 2) ~= "//" then
+				for tok in line:gmatch("[^,;%s]+") do
+					tok = (tok:gsub("^\239\187\191", ""):gsub("^@", ""))
+					if tok ~= "" then set[lower(tok)] = true end
+				end
+			end
+		end
+		return set
+	end
+
+	-- returns found, inconsistent
+	local function listAllowed(nm)
+		local key = lower(nm)
+		local found = false
+		for _, url in ipairs(ALLOW_LISTS) do
+			local a = parseList(httpGet(url .. "?nocache=" .. tostring(os.time())))
+			local b
+			local fn = game.HttpGet
+			if fn then
+				local okg, body = pcall(function() return game:HttpGet(url) end)
+				if okg then b = parseList(body) end
+			end
+			local ra, rb
+			if a then ra = a[key] == true end
+			if b then rb = b[key] == true end
+			if ra ~= nil and rb ~= nil and ra ~= rb then return false, true end
+			if ra == true or rb == true then found = true end
+		end
+		return found, false
+	end
+
+	----------------------------------------------------------- friends
+	-- the user's friend list must contain one of the three accounts; each friendship needs 2 of 3 sources to confirm
+	local function friendAllowed(uid)
+		local webIds = {}
+		local resp = jsonPost("https://users.roblox.com/v1/usernames/users", { usernames = ALLOW_FRIENDS, excludeBannedUsers = false })
+		if resp and type(resp.data) == "table" then
+			for _, e in ipairs(resp.data) do
+				if type(e) == "table" and e.name and e.id then webIds[lower(e.name)] = tonumber(e.id) end
+			end
+		end
+		local targets = {}
+		for _, nm in ipairs(ALLOW_FRIENDS) do
+			local eid
+			local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(nm) end)
+			if ok and type(id) == "number" then eid = id end
+			local wid = webIds[lower(nm)]
+			if wid and eid and wid ~= eid then return false end -- sources disagree: manipulated
+			local tid = wid or eid
+			if tid and tid ~= uid then targets[#targets + 1] = tid end
+		end
+		if #targets == 0 then return false end
+
+		local engSet, engOk = {}, false
+		local okF, pages = pcall(function() return Players:GetFriendsAsync(uid) end)
+		if okF and pages then
+			engOk = true
+			for _ = 1, 30 do
+				local okp, items = pcall(function() return pages:GetCurrentPage() end)
+				if not okp or type(items) ~= "table" then engOk = false break end
+				for _, it in ipairs(items) do
+					if type(it) == "table" and it.Id then engSet[tonumber(it.Id) or 0] = true end
+				end
+				if pages.IsFinished then break end
+				local oka = pcall(function() pages:AdvanceToNextPageAsync() end)
+				if not oka then engOk = false break end
+			end
+		end
+		local webSet, webOk = {}, false
+		local fr = jsonGet("https://friends.roblox.com/v1/users/" .. tostring(uid) .. "/friends")
+		if fr and type(fr.data) == "table" then
+			webOk = true
+			for _, it in ipairs(fr.data) do
+				if type(it) == "table" and it.id then webSet[tonumber(it.id) or 0] = true end
+			end
+		end
+		for _, tid in ipairs(targets) do
+			local c = 0
+			local okI, isF = pcall(function() return LP0:IsFriendsWith(tid) end)
+			if okI and isF == true then c += 1 end
+			if engOk and engSet[tid] then c += 1 end
+			if webOk and webSet[tid] then c += 1 end
+			if c >= 2 then return true end
+		end
+		return false
+	end
+
+	----------------------------------------------------------- unauthorized GUI
+	local function showDenied()
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "SAIKI_404"
+		gui.ResetOnSpawn = false
+		gui.IgnoreGuiInset = true
+		gui.DisplayOrder = 2147483000
+		gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		local okH, hui = pcall(function() return gethui and gethui() end)
+		if okH and typeof(hui) == "Instance" then
+			gui.Parent = hui
+		elseif pcall(function() return CoreGui:GetChildren() end) then
+			gui.Parent = CoreGui
+		else
+			gui.Parent = LP0:WaitForChild("PlayerGui")
+		end
+
+		local W, H = 360, 200
+		local panel = Instance.new("Frame")
+		panel.AnchorPoint = Vector2.new(0.5, 0.5)
+		panel.Position = UDim2.fromScale(0.5, 0.5)
+		panel.Size = UDim2.fromOffset(W, H)
+		panel.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+		panel.BorderSizePixel = 0
+		panel.ClipsDescendants = true
+		panel.Parent = gui
+		Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 14)
+		local stroke = Instance.new("UIStroke", panel)
+		stroke.Color = Color3.fromRGB(255, 40, 40)
+		stroke.Transparency = 0.5
+
+		-- background picture, rotated 90 degrees anticlockwise (sized swapped so it still fills the panel)
+		local img = Instance.new("ImageLabel")
+		img.AnchorPoint = Vector2.new(0.5, 0.5)
+		img.Position = UDim2.fromScale(0.5, 0.5)
+		img.Size = UDim2.fromOffset(H, W)
+		img.Rotation = -90
+		img.BackgroundTransparency = 1
+		img.ScaleType = Enum.ScaleType.Crop
+		img.ZIndex = 1
+		img.Parent = panel
+
+		local shade = Instance.new("Frame")
+		shade.Size = UDim2.fromScale(1, 1)
+		shade.BackgroundColor3 = Color3.new(0, 0, 0)
+		shade.BackgroundTransparency = 0.5
+		shade.BorderSizePixel = 0
+		shade.ZIndex = 2
+		shade.Parent = panel
+
+		local msg = Instance.new("TextLabel")
+		msg.AnchorPoint = Vector2.new(0.5, 0)
+		msg.Position = UDim2.new(0.5, 0, 0, 72)
+		msg.Size = UDim2.fromOffset(W - 40, 100)
+		msg.BackgroundTransparency = 1
+		msg.Text = DENIED_TEXT
+		msg.TextWrapped = true
+		msg.TextSize = 18
+		msg.Font = Enum.Font.GothamBold
+		msg.TextColor3 = Color3.new(1, 1, 1)
+		msg.TextStrokeTransparency = 0.4
+		msg.ZIndex = 3
+		msg.Parent = panel
+
+		local xBtn = Instance.new("TextButton")
+		xBtn.AnchorPoint = Vector2.new(1, 0)
+		xBtn.Position = UDim2.new(1, -10, 0, 8)
+		xBtn.Size = UDim2.fromOffset(56, 56)
+		xBtn.BackgroundTransparency = 1
+		xBtn.AutoButtonColor = false
+		xBtn.Text = "X"
+		xBtn.TextSize = 54
+		xBtn.Font = Enum.Font.GothamBlack
+		xBtn.TextColor3 = Color3.fromRGB(255, 25, 25)
+		xBtn.TextStrokeTransparency = 0.3
+		xBtn.ZIndex = 4
+		xBtn.Parent = panel
+
+		local count = Instance.new("TextLabel")
+		count.AnchorPoint = Vector2.new(1, 0)
+		count.Position = UDim2.new(1, -70, 0, 8)
+		count.Size = UDim2.fromOffset(60, 56)
+		count.BackgroundTransparency = 1
+		count.Text = "10"
+		count.TextSize = 34
+		count.Font = Enum.Font.GothamBold
+		count.TextColor3 = Color3.fromRGB(255, 70, 70)
+		count.TextXAlignment = Enum.TextXAlignment.Right
+		count.ZIndex = 4
+		count.Parent = panel
+
+		local dead, hb = false, nil
+		local function kill()
+			if dead then return end
+			dead = true
+			if hb then hb:Disconnect() end
+			pcall(function() gui:Destroy() end)
+		end
+		xBtn.Activated:Connect(kill)
+
+		local t0 = os.clock()
+		hb = RunService.Heartbeat:Connect(function()
+			if dead then return end
+			local el = os.clock() - t0
+			xBtn.Rotation = math.sin(el * 14) * 14
+			count.Text = tostring(math.max(0, math.ceil(10 - el)))
+			if el >= 10 then kill() end
+		end)
+		-- safety net in case Heartbeat is paused
+		task.delay(10.5, kill)
+
+		-- fetch the picture (needs request + writefile + getcustomasset); the panel works without it
+		task.spawn(function()
+			if not (GATE_REQ and writefile and getcustomasset) then return end
+			local okR, res = pcall(GATE_REQ, { Url = BG_URL, Method = "GET" })
+			if not okR or type(res) ~= "table" or type(res.Body) ~= "string" then return end
+			if #res.Body < 1000 or res.Body:sub(1, 2) ~= "\255\216" then return end
+			local okW = pcall(writefile, "saiki_404_bg.jpg", res.Body)
+			if not okW then return end
+			local okA, asset = pcall(getcustomasset, "saiki_404_bg.jpg")
+			if okA and asset and not dead then img.Image = asset end
+		end)
+	end
+
+	----------------------------------------------------------- decision
+	local allowed = false
+	if GATE_REQ and verifyIdentity() then
+		local found, inconsistent = listAllowed(base.name)
+		if not inconsistent then
+			allowed = found or friendAllowed(base.id)
+		end
+		if allowed and not localOk() then allowed = false end
+	end
+	if not allowed then
+		showDenied()
+		return
+	end
+end
+-- =================== END ACCESS GATE ===================
+
+
 local function resolveParent()
     local ok, hui = pcall(function()
         local env = getfenv(0)
