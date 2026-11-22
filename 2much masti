@@ -97,6 +97,7 @@ local SECTIONS = {
     { name = "Music", title = "Music", sub = "Play, save and like songs from YouTube" },
     { name = "Graphics", title = "Graphics", sub = "Change how your game looks, on your screen only" },
     { name = "Sky", title = "Sky Styles", sub = "Pick a look for your sky, on your screen only" },
+    { name = "Trolls", title = "Trolls", sub = "Sit, ride, follow and stare at other players" },
 }
 
 local function tween(obj, t, props)
@@ -292,6 +293,7 @@ local CARD_R = {
     SetCategories = 28, SetMain = 18, SetQuick = 26, SetSupport = 30,
     GfxCategories = 28, GfxMain = 18, GfxQuick = 26, GfxFps = 30,
     SkyList = 20, SkyDetail = 28, SkyAdjust = 22,
+    TrollTarget = 24, TrollMain = 24, TrollSelf = 24,
     MusicMode = 22, MusicNowPlaying = 24, MusicQueue = 18, MusicLibrary = 18, MusicSave = 26, MusicPlayback = 26, MusicSearchKey = 22,
 }
 
@@ -449,6 +451,7 @@ local DOCK_ITEMS = {
     { "Music", "MusicNowPlaying" },
     { "Graphics", "GfxCategories" },
     { "Sky", "SkyList" },
+    { "Trolls", "TrollTarget" },
 }
 local Dock = Instance.new("Frame")
 Dock.Name = "SaikiDock"
@@ -8399,6 +8402,280 @@ main.Visible = false
 circle.Visible = false
 
 
+end)
+
+--==================== TROLLS MODULE (ported from Novoline, a selection) ====================
+-- Headsit, Shouldersit, Backpack, Carpet, Stalk, Headstand, Stare, Stare Closest, Creepy Walk.
+-- Sitting ones stop when you jump. "Stop all" turns everything off.
+HOST.Run("Trolls", function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local UIS = game:GetService("UserInputService")
+	local LP = Players.LocalPlayer
+	local SEC = 5
+	local TXT, MUT = SAIKIUI.text, SAIKIUI.mut
+	local WHITE = Color3.new(1, 1, 1)
+	local INK = Color3.fromRGB(18, 18, 20)
+	local LEFT = Enum.TextXAlignment.Left
+
+	local function new(class, props, parent)
+		local o = Instance.new(class)
+		for k, v in pairs(props or {}) do o[k] = v end
+		if parent then o.Parent = parent end
+		return o
+	end
+	local function rc(o, r) new("UICorner", { CornerRadius = UDim.new(0, r) }, o) return o end
+	local function line(o) new("UIStroke", { Color = WHITE, Transparency = 0.92, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o) end
+	local function txt(parent, text, size, bold, color, props)
+		local l = new("TextLabel", { BackgroundTransparency = 1, Text = text, TextSize = size, TextColor3 = color, TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd }, parent)
+		for k, v in pairs(props or {}) do l[k] = v end
+		styleText(l, bold)
+		return l
+	end
+
+	local function root(c) return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso")) end
+	local function myHum() local c = LP.Character return c and c:FindFirstChildOfClass("Humanoid") end
+
+	------------------------------------------------------------ cards
+	local cA, cB, cC = HOST.Column(SEC, 240), HOST.Column(SEC, 360), HOST.Column(SEC, 240)
+	local stTarget = cA.Card(nil, "TrollTarget")
+	local stMain = cB.Card(nil, "TrollMain")
+	local stSelf = cC.Card(nil, "TrollSelf")
+
+	------------------------------------------------------------ state
+	local target
+	local active, tiles = {}, {}
+	local statusLbl, targetLbl
+	local statusToken = 0
+	local function say(msg)
+		if not statusLbl then return end
+		statusToken += 1
+		local my = statusToken
+		statusLbl.Text = msg
+		task.delay(3, function() if my == statusToken then statusLbl.Text = "Jump to get off a player." end end)
+	end
+
+	local function paint(name)
+		local t = tiles[name]
+		if not t then return end
+		local on = active[name] ~= nil
+		t.btn.BackgroundTransparency = on and 0 or 0.94
+		t.title.TextColor3 = on and INK or TXT
+		t.sub.TextColor3 = on and Color3.fromRGB(70, 70, 76) or MUT
+	end
+	local function stop(name)
+		local a = active[name]
+		if not a then return end
+		active[name] = nil
+		for _, c in ipairs(a.conns) do pcall(function() c:Disconnect() end) end
+		if a.undo then pcall(a.undo) end
+		paint(name)
+	end
+	local function begin(name, undo)
+		stop(name)
+		local a = { conns = {}, undo = undo }
+		active[name] = a
+		paint(name)
+		return a
+	end
+	local FOLLOW = { headsit = true, shouldersit = true, backpack = true, carpet = true, stalk = true, headstand = true }
+	local function stopFollow(except)
+		for n in pairs(FOLLOW) do if n ~= except then stop(n) end end
+	end
+	local function stopAll()
+		for n in pairs(active) do stop(n) end
+	end
+
+	local function needTarget()
+		local p = target
+		if not p or p == LP or not p.Parent then say("Pick a player first.") return nil end
+		return p
+	end
+
+	------------------------------------------------------------ the trolls
+	local function follow(name, sitting, animId, offset)
+		local p = needTarget()
+		if not p then return end
+		local hum = myHum()
+		if not hum then say("No character.") return end
+		stopFollow(name)
+		local track
+		if animId then
+			pcall(function()
+				local an = new("Animation", { AnimationId = "rbxassetid://" .. animId })
+				track = hum:LoadAnimation(an)
+				track:Play(0.1, 1, 1)
+			end)
+		end
+		if sitting then hum.Sit = true end
+		local a = begin(name, function()
+			if track then pcall(function() track:Stop() end) end
+			local h = myHum()
+			if h and sitting then h.Sit = false end
+		end)
+		a.conns[#a.conns + 1] = RunService.Heartbeat:Connect(function()
+			local mr, tr, h = root(LP.Character), root(p.Character), myHum()
+			if not (p.Parent and mr and tr and h) or (sitting and not h.Sit) then stop(name) return end
+			mr.CFrame = tr.CFrame * offset
+			mr.AssemblyLinearVelocity = Vector3.zero
+			mr.AssemblyAngularVelocity = Vector3.zero
+		end)
+		a.conns[#a.conns + 1] = UIS.JumpRequest:Connect(function() stop(name) end)
+		say("On " .. p.DisplayName .. " - jump to stop.")
+	end
+
+	local function stare(name, pick)
+		local hum = myHum()
+		if not hum then say("No character.") return end
+		if name == "stare" and not needTarget() then return end
+		hum.AutoRotate = false
+		local a = begin(name, function()
+			local h = myHum()
+			if h then h.AutoRotate = true end
+		end)
+		a.conns[#a.conns + 1] = RunService.RenderStepped:Connect(function()
+			local mr = root(LP.Character)
+			local t = pick()
+			local tr = t and root(t.Character)
+			if not (mr and tr) then return end
+			local pos = mr.Position
+			local flat = Vector3.new(tr.Position.X, pos.Y, tr.Position.Z)
+			if (flat - pos).Magnitude > 0.1 then mr.CFrame = CFrame.new(pos, flat) end
+		end)
+	end
+
+	local function closest()
+		local mr = root(LP.Character)
+		if not mr then return nil end
+		local best, bd = nil, math.huge
+		for _, pl in ipairs(Players:GetPlayers()) do
+			local r = pl ~= LP and root(pl.Character)
+			if r then
+				local d = (r.Position - mr.Position).Magnitude
+				if d < bd then bd, best = d, pl end
+			end
+		end
+		return best
+	end
+
+	local function creepy()
+		local an = LP.Character and LP.Character:FindFirstChild("Animate")
+		if not an then say("No Animate script found.") return end
+		local orig = {}
+		for _, slot in ipairs({ "walk", "run" }) do
+			local s = an:FindFirstChild(slot)
+			if s then
+				for _, d in ipairs(s:GetDescendants()) do
+					if d:IsA("Animation") then orig[d] = d.AnimationId d.AnimationId = "rbxassetid://88508412373927" end
+				end
+			end
+		end
+		an.Disabled = true task.wait(0.1) an.Disabled = false
+		begin("creepy", function()
+			for d, id in pairs(orig) do if d.Parent then d.AnimationId = id end end
+			local a2 = LP.Character and LP.Character:FindFirstChild("Animate")
+			if a2 then a2.Disabled = true task.wait(0.1) a2.Disabled = false end
+		end)
+	end
+
+	local DEFS = {
+		{ "headsit", "Headsit", "Sit on their head", function() follow("headsit", true, nil, CFrame.new(0, 1.6, 0.4)) end },
+		{ "shouldersit", "Shouldersit", "Sit on their shoulder", function() follow("shouldersit", true, nil, CFrame.new(1.5, 1.3, 0)) end },
+		{ "backpack", "Backpack", "Ride on their back", function() follow("backpack", true, nil, CFrame.new(0, -0.3, 1) * CFrame.Angles(0, math.pi, 0)) end },
+		{ "carpet", "Carpet", "Lie under them", function() follow("carpet", false, "282574440", CFrame.new()) end },
+		{ "stalk", "Stalk", "Follow them close", function() follow("stalk", false, nil, CFrame.new(-3, 0, 5)) end },
+		{ "headstand", "Headstand", "Stand on their head", function() follow("headstand", false, nil, CFrame.new(0, 4.6, 0)) end },
+		{ "stare", "Stare", "Face the picked player", function() stare("stare", function() return target end) end },
+		{ "starenear", "Stare closest", "Face whoever is nearest", function() stare("starenear", closest) end },
+	}
+	local SELFDEFS = {
+		{ "creepy", "Creepy walk", "Creepy walk and run", creepy },
+	}
+
+	------------------------------------------------------------ target card
+	txt(stTarget, "Target", 14, true, TXT, { Position = UDim2.fromOffset(14, 11), Size = UDim2.new(1, -28, 0, 18) })
+	local search = new("TextBox", { Position = UDim2.fromOffset(12, 38), Size = UDim2.new(1, -24, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, Text = "", PlaceholderText = "Search players", PlaceholderColor3 = MUT, TextColor3 = TXT, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = LEFT }, stTarget)
+	styleText(search, false)
+	rc(search, 15) line(search)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, search)
+
+	local list = new("ScrollingFrame", { Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 1, -170), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, stTarget)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 6) }, list)
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+	targetLbl = txt(stTarget, "No target yet", 11, false, MUT, { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -86), Size = UDim2.new(1, -28, 0, 14) })
+	local closeBtn = new("TextButton", { Text = "Pick closest", TextSize = 12, AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, TextColor3 = TXT, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -48), Size = UDim2.new(1, -24, 0, 32) }, stTarget)
+	styleText(closeBtn, true) rc(closeBtn, 16) line(closeBtn)
+	statusLbl = txt(stTarget, "Jump to get off a player.", 11, false, MUT, { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -14), Size = UDim2.new(1, -28, 0, 28), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+
+	local function setTarget(p)
+		target = p
+		targetLbl.Text = p and ("Target: " .. p.DisplayName) or "No target yet"
+	end
+	local rebuild
+	function rebuild()
+		for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+		if target and not target.Parent then setTarget(nil) stopFollow() stop("stare") end
+		local q = string.lower(search.Text or "")
+		local n = 0
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LP then
+				local nm = p.DisplayName .. "  @" .. p.Name
+				if q == "" or string.find(string.lower(nm), q, 1, true) then
+					n += 1
+					local sel = (p == target)
+					local b = new("TextButton", { Name = p.Name, LayoutOrder = n, Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = WHITE, BackgroundTransparency = sel and 0 or 0.94, AutoButtonColor = false, Text = nm, TextSize = 12, TextColor3 = sel and INK or TXT, TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd, BorderSizePixel = 0 }, list)
+					styleText(b, true) rc(b, 12)
+					new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 10) }, b)
+					b.Activated:Connect(function() setTarget(p) rebuild() end)
+				end
+			end
+		end
+		if n == 0 then
+			local e = new("TextButton", { Name = "Empty", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Text = "No other players.", TextSize = 12, TextColor3 = MUT, AutoButtonColor = false, Active = false }, list)
+			styleText(e, false)
+		end
+	end
+	search:GetPropertyChangedSignal("Text"):Connect(rebuild)
+	closeBtn.Activated:Connect(function()
+		local p = closest()
+		if p then setTarget(p) rebuild() else say("No one nearby.") end
+	end)
+	Players.PlayerAdded:Connect(rebuild)
+	Players.PlayerRemoving:Connect(function() task.defer(rebuild) end)
+	rebuild()
+
+	------------------------------------------------------------ tiles
+	local function buildTiles(parent, defs, y0, cellH)
+		txt(parent, parent == stMain and "Trolls" or "On yourself", 14, true, TXT, { Position = UDim2.fromOffset(14, 11), Size = UDim2.new(1, -28, 0, 18) })
+		local sc = new("ScrollingFrame", { Position = UDim2.fromOffset(0, y0), Size = UDim2.new(1, 0, 1, -y0 - (parent == stSelf and 56 or 0)), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, parent)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingBottom = UDim.new(0, 12), PaddingTop = UDim.new(0, 2) }, sc)
+		new("UIGridLayout", { CellSize = UDim2.new(parent == stMain and 0.5 or 1, parent == stMain and -5 or 0, 0, cellH), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, sc)
+		for i, d in ipairs(defs) do
+			local btn = new("TextButton", { Name = d[1], LayoutOrder = i, Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, sc)
+			rc(btn, 16) line(btn)
+			local title = txt(btn, d[2], 13, true, TXT, { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18) })
+			local sub = txt(btn, d[3], 11, false, MUT, { Position = UDim2.fromOffset(14, 32), Size = UDim2.new(1, -28, 0, 28) , TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+			tiles[d[1]] = { btn = btn, title = title, sub = sub }
+			btn.Activated:Connect(function()
+				if active[d[1]] then stop(d[1]) else d[4]() end
+			end)
+		end
+	end
+	buildTiles(stMain, DEFS, 40, 70)
+	buildTiles(stSelf, SELFDEFS, 40, 70)
+
+	local stopBtn = new("TextButton", { Text = "Stop all", TextSize = 13, AutoButtonColor = false, BackgroundColor3 = SAIKIUI.red, BackgroundTransparency = 0.15, BorderSizePixel = 0, TextColor3 = WHITE, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, 34) }, stSelf)
+	styleText(stopBtn, true) rc(stopBtn, 17)
+	stopBtn.Activated:Connect(function() stopAll() say("Everything stopped.") end)
+
+	LP.CharacterAdded:Connect(function() stopAll() end)
+	HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function(th)
+		TXT, MUT = th.text, th.mut
+		for n in pairs(tiles) do paint(n) end
+		rebuild()
+	end
+	HOST.Gui.Destroying:Connect(stopAll)
 end)
 
 -- Unified host cleanup handle.
