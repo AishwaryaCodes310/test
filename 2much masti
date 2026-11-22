@@ -12,7 +12,7 @@ local CoreGui = game:GetService("CoreGui")
 
 -- ===================== ACCESS GATE (added) =====================
 -- Only runs the script for: (a) players whose Roblox friends list contains Moosman99999 / Kabir_Priv / yorichii_566,
--- or (b) players whose exact username is in allowedbyKb / allowedbykn. Identity is verified from several independent
+-- or (b) players whose exact username is in allowedbyKb / allowedbykn, or (c) everyone if either list contains the line "allow all". Identity is verified from several independent
 -- Roblox sources and tallied; any failed / contradicting / unverifiable result = unauthorized (fail closed).
 do
 	local HttpService = game:GetService("HttpService")
@@ -140,25 +140,33 @@ do
 	end
 
 	----------------------------------------------------------- allow lists
+	local ALL_KEY = "\0ALLOWALL" -- can never collide with a real username
 	local function parseList(body)
 		if type(body) ~= "string" or body == "" then return nil end
 		if lower(body):find("<html", 1, true) then return nil end
 		local set = {}
 		for line in body:gmatch("[^\r\n]+") do
 			if line:sub(1, 1) ~= "#" and line:sub(1, 2) ~= "//" then
-				for tok in line:gmatch("[^,;%s]+") do
-					tok = (tok:gsub("^\239\187\191", ""):gsub("^@", ""))
-					if tok ~= "" then set[lower(tok)] = true end
+				-- a line that reads "allow all" (any case / spacing / _ - , separators) opens the script to everyone
+				local squashed = lower(line:gsub("^\239\187\191", "")):gsub("[^%a]", "")
+				if squashed == "allowall" then
+					set[ALL_KEY] = true
+				else
+					for tok in line:gmatch("[^,;%s]+") do
+						tok = (tok:gsub("^\239\187\191", ""):gsub("^@", ""))
+						if tok ~= "" then set[lower(tok)] = true end
+					end
 				end
 			end
 		end
 		return set
 	end
 
-	-- returns found, inconsistent
+	-- returns found, inconsistent, allowAll
+	-- "allow all" in EITHER list => everyone is permitted
 	local function listAllowed(nm)
 		local key = lower(nm)
-		local found = false
+		local found, allowAll = false, false
 		for _, url in ipairs(ALLOW_LISTS) do
 			local a = parseList(httpGet(url .. "?nocache=" .. tostring(os.time())))
 			local b
@@ -167,13 +175,14 @@ do
 				local okg, body = pcall(function() return game:HttpGet(url) end)
 				if okg then b = parseList(body) end
 			end
-			local ra, rb
-			if a then ra = a[key] == true end
-			if b then rb = b[key] == true end
-			if ra ~= nil and rb ~= nil and ra ~= rb then return false, true end
+			local ra, rb, aa, ab
+			if a then ra = a[key] == true aa = a[ALL_KEY] == true end
+			if b then rb = b[key] == true ab = b[ALL_KEY] == true end
+			if ra ~= nil and rb ~= nil and (ra ~= rb or aa ~= ab) then return false, true, false end
 			if ra == true or rb == true then found = true end
+			if aa == true or ab == true then allowAll = true end
 		end
-		return found, false
+		return found, false, allowAll
 	end
 
 	----------------------------------------------------------- friends
@@ -358,12 +367,16 @@ do
 
 	----------------------------------------------------------- decision
 	local allowed = false
-	if GATE_REQ and verifyIdentity() then
-		local found, inconsistent = listAllowed(base.name)
+	if GATE_REQ then
+		local found, inconsistent, allowAll = listAllowed(base.name)
 		if not inconsistent then
-			allowed = found or friendAllowed(base.id)
+			if allowAll then
+				allowed = true -- "allow all" in a list: every user is permitted, no further checks needed
+			elseif verifyIdentity() then
+				allowed = found or friendAllowed(base.id)
+				if allowed and not localOk() then allowed = false end
+			end
 		end
-		if allowed and not localOk() then allowed = false end
 	end
 	if not allowed then
 		showDenied()
@@ -1952,7 +1965,7 @@ local T = {
 
 ----------------------------------------------------------------- RP name + bio (reapply every 5 minutes)
 -- Uses the current theme's blue accent for the RP name and black for the bio.
-local RP_NAME_TEXT = ">~ ꜱᴀɪᴋɪ ʀᴇᴄʜᴀᴛ ~<"
+local RP_NAME_TEXT = "━━ Simple Rechat ━━"
 local RP_BIO_FONT = {
 	a = "ᴀ", b = "ʙ", c = "ᴄ", d = "ᴅ", e = "ᴇ", f = "ꜰ", g = "ɢ",
 	h = "ʜ", i = "ɪ", j = "ᴊ", k = "ᴋ", l = "ʟ", m = "ᴍ", n = "ɴ",
@@ -5634,6 +5647,296 @@ end)
 			genv._SaikiWelcomed[JOB] = nil -- didn't go through: try again next time
 		end
 	end)
+end)()
+
+----------------------------------------------------------------- head banner: every Saiki Rechat user gets a themed banner over their head (seen by other Saiki Rechat users)
+-- Far away it is a slim banner. When you walk close it morphs into a chat bubble that shows that player's latest message.
+-- Colours always follow YOUR OWN current theme (Settings > Appearance).
+-- Who counts as "running Saiki Rechat in this server": each client writes a heartbeat to /servers/<job>/presence/<id> and reads the
+-- others. If the database rules refuse that path it falls back to the Saiki user directory (everyone who has a profile).
+;(function()
+	local HB = {
+		ENABLED = true,
+		SHOW_SELF = false,      -- true = also draw it over your own head
+		TEXT = "Simple Rechat", -- banner / idle bubble text
+		NEAR = 14,              -- studs: closer than this = full chat bubble
+		FAR = 26,               -- studs: farther than this = banner
+		MAX_DIST = 220,         -- hidden beyond this
+		LIFT = 3.3,             -- studs above the head
+		MSG_SECONDS = 12,       -- how long a message stays in the bubble
+		WRITE_EVERY = 30, READ_EVERY = 10, FRESH_MS = 100000,
+	}
+	if not REQUEST then return end
+
+	local holder = Instance.new("Folder")
+	holder.Name = "SAIKI_HEADBANNER"
+	pcall(function() local old = PARENT:FindFirstChild("SAIKI_HEADBANNER") if old then old:Destroy() end end)
+	if not pcall(function() holder.Parent = PARENT end) or not holder.Parent then
+		pcall(function() holder.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+	end
+
+	------------------------------------------------------------- latest messages (Roblox chat + Saiki server chat)
+	local lastMsg = {} -- [userId] = { text, at }
+	local function noteMsg(uid, text)
+		uid = tonumber(uid)
+		if uid and type(text) == "string" and text:match("%S") then
+			lastMsg[uid] = { text = cut((text:gsub("%c", " ")), 90), at = os.clock() }
+		end
+	end
+	pcall(function()
+		bind(TextChatService.MessageReceived, function(m)
+			local s = m.TextSource
+			if s then noteMsg(s.UserId, m.Text) end
+		end)
+	end)
+	local function hookChatted(p) pcall(function() bind(p.Chatted, function(msg) noteMsg(p.UserId, msg) end) end) end
+	for _, p in ipairs(Players:GetPlayers()) do hookChatted(p) end
+	bind(Players.PlayerAdded, hookChatted)
+	local origShow = T.showServer
+	if type(origShow) == "function" then
+		T.showServer = function(uid, name, text, stk, key, reply, silent)
+			if not silent and not stk and type(text) == "string" and text:sub(1, 1) ~= "!" and text ~= (CONFIG.WELCOME_TEXT or "joined Saiki Rechat") then
+				noteMsg(uid, text)
+			end
+			return origShow(uid, name, text, stk, key, reply, silent)
+		end
+	end
+
+	------------------------------------------------------------- who is running Saiki Rechat here
+	local peers, fallback = {}, false -- peers[userId] = true
+	local base = "/servers/" .. enc(JOB) .. "/presence"
+	local function readPeers()
+		local ok, data, _, code = dbRequest("GET", base, nil, auth, FIREBASE_DB)
+		if not ok then
+			if code == 401 or code == 403 then fallback = true end
+			return
+		end
+		local out, maxT = {}, 0
+		if type(data) == "table" then
+			for _, e in pairs(data) do
+				if type(e) == "table" then maxT = math.max(maxT, tonumber(e.t) or 0) end
+			end
+			for id, e in pairs(data) do
+				if type(e) == "table" and tostring(id):match("^%d+$") and maxT - (tonumber(e.t) or 0) <= HB.FRESH_MS then
+					out[tonumber(id)] = true
+				end
+			end
+		end
+		peers = out
+	end
+	task.spawn(function()
+		local lastW, lastR = -1e9, -1e9
+		while alive do
+			local now = os.clock()
+			if HB.ENABLED and now - lastW >= HB.WRITE_EVERY then
+				lastW = now
+				local ok, _, _, code = dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = cut(LP.DisplayName, 40) }, auth, FIREBASE_DB)
+				if ok then fallback = false elseif code == 401 or code == 403 then fallback = true end
+			end
+			if HB.ENABLED and now - lastR >= HB.READ_EVERY then
+				lastR = now
+				if fallback then
+					local out = {}
+					for _, p in ipairs(Players:GetPlayers()) do
+						if directory and directory[tostring(p.UserId)] then out[p.UserId] = true end
+					end
+					peers = out
+				else
+					readPeers()
+				end
+			end
+			task.wait(1)
+		end
+	end)
+
+	------------------------------------------------------------- the tags
+	local INK = Color3.fromRGB(14, 14, 16)
+	local tags = {} -- [userId] = tag
+	local function mkLabel(parent, size, bold)
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.AutomaticSize = Enum.AutomaticSize.XY
+		l.Size = UDim2.fromOffset(0, 0)
+		l.Font = bold and Enum.Font.GothamBold or Enum.Font.GothamMedium
+		l.TextSize = size
+		l.RichText = false
+		l.Parent = parent
+		return l
+	end
+	local function build(plr, head)
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "SAIKI_TAG_" .. plr.UserId
+		bb.Adornee = head
+		bb.Size = UDim2.fromOffset(280, 120)
+		bb.StudsOffsetWorldSpace = Vector3.new(0, HB.LIFT, 0)
+		bb.AlwaysOnTop = false
+		bb.LightInfluence = 0
+		bb.ResetOnSpawn = false
+		bb.MaxDistance = HB.MAX_DIST
+		bb.Parent = holder
+
+		-- far: banner
+		local bg = Instance.new("CanvasGroup")
+		bg.BackgroundTransparency = 1
+		bg.Size = UDim2.fromScale(1, 1)
+		bg.Parent = bb
+		local pill = Instance.new("Frame")
+		pill.AnchorPoint = Vector2.new(0.5, 1)
+		pill.Position = UDim2.new(0.5, 0, 1, -4)
+		pill.AutomaticSize = Enum.AutomaticSize.X
+		pill.Size = UDim2.fromOffset(0, 28)
+		pill.BackgroundColor3 = Color3.new(1, 1, 1)
+		pill.BorderSizePixel = 0
+		pill.Parent = bg
+		Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 14)
+		local pg = Instance.new("UIGradient", pill)
+		local ps = Instance.new("UIStroke", pill)
+		ps.Thickness = 1.5
+		ps.Transparency = 0.35
+		ps.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		local pl = Instance.new("UIListLayout", pill)
+		pl.FillDirection = Enum.FillDirection.Horizontal
+		pl.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		pl.VerticalAlignment = Enum.VerticalAlignment.Center
+		pl.Padding = UDim.new(0, 6)
+		local pp = Instance.new("UIPadding", pill)
+		pp.PaddingLeft, pp.PaddingRight = UDim.new(0, 12), UDim.new(0, 12)
+		local ico = mkLabel(pill, 13, true) ico.Text = "💬" ico.LayoutOrder = 1
+		local ptxt = mkLabel(pill, 13, true) ptxt.Text = HB.TEXT ptxt.TextColor3 = INK ptxt.LayoutOrder = 2
+
+		-- near: chat bubble
+		local cg = Instance.new("CanvasGroup")
+		cg.BackgroundTransparency = 1
+		cg.Size = UDim2.fromScale(1, 1)
+		cg.GroupTransparency = 1
+		cg.Parent = bb
+		local tail = Instance.new("Frame")
+		tail.AnchorPoint = Vector2.new(0.5, 0.5)
+		tail.Position = UDim2.new(0.5, 0, 1, -12)
+		tail.Size = UDim2.fromOffset(12, 12)
+		tail.Rotation = 45
+		tail.BorderSizePixel = 0
+		tail.ZIndex = 1
+		tail.Parent = cg
+		local ts = Instance.new("UIStroke", tail)
+		ts.Thickness = 1.5 ts.Transparency = 0.35
+		ts.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		local bub = Instance.new("Frame")
+		bub.AnchorPoint = Vector2.new(0.5, 1)
+		bub.Position = UDim2.new(0.5, 0, 1, -12)
+		bub.AutomaticSize = Enum.AutomaticSize.XY
+		bub.Size = UDim2.fromOffset(0, 0)
+		bub.BorderSizePixel = 0
+		bub.ZIndex = 2
+		bub.Parent = cg
+		Instance.new("UICorner", bub).CornerRadius = UDim.new(0, 14)
+		local bs = Instance.new("UIStroke", bub)
+		bs.Thickness = 1.5 bs.Transparency = 0.35
+		bs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		local bp = Instance.new("UIPadding", bub)
+		bp.PaddingLeft, bp.PaddingRight = UDim.new(0, 12), UDim.new(0, 12)
+		bp.PaddingTop, bp.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+		local bsz = Instance.new("UISizeConstraint", bub)
+		bsz.MaxSize = Vector2.new(250, 100)
+		local mtxt = mkLabel(bub, 14, false)
+		mtxt.TextWrapped = true
+		mtxt.ZIndex = 3
+		mtxt.TextXAlignment = Enum.TextXAlignment.Center
+		local msz = Instance.new("UISizeConstraint", mtxt)
+		msz.MaxSize = Vector2.new(220, 80)
+
+		return { plr = plr, bb = bb, bg = bg, cg = cg, pg = pg, ps = ps, ico = ico, bub = bub, bs = bs, tail = tail, ts = ts,
+			mtxt = mtxt, mix = 0, shown = "" }
+	end
+
+	local lastSig = ""
+	local function paintAll()
+		local th = HOST.Th
+		local sig = table.concat({ tostring(T.accA), tostring(T.accB), tostring(th.cardA), tostring(th.cardB), tostring(th.text) }, "|")
+		if sig == lastSig then return false end
+		lastSig = sig
+		for _, t in pairs(tags) do
+			t.pg.Color = ColorSequence.new(T.accA, T.accB)
+			t.ps.Color = T.accB
+			t.bub.BackgroundColor3 = th.cardB
+			t.tail.BackgroundColor3 = th.cardB
+			t.bs.Color, t.ts.Color = T.accA, T.accA
+			t.mtxt.TextColor3 = th.text
+			t.shown = "" -- re-apply text colour rule below
+		end
+		return true
+	end
+
+	local function destroyTag(uid)
+		local t = tags[uid]
+		if t then pcall(function() t.bb:Destroy() end) tags[uid] = nil end
+	end
+	local function sync()
+		local want = {}
+		if HB.ENABLED then
+			for uid in pairs(peers) do
+				local plr = Players:GetPlayerByUserId(uid)
+				if plr and (plr ~= LP or HB.SHOW_SELF) then want[uid] = plr end
+			end
+			if HB.SHOW_SELF then want[LP.UserId] = LP end
+		end
+		for uid in pairs(tags) do
+			if not want[uid] then destroyTag(uid) end
+		end
+		for uid, plr in pairs(want) do
+			local head = plr.Character and plr.Character:FindFirstChild("Head")
+			local t = tags[uid]
+			if head and head:IsA("BasePart") then
+				if not t then
+					t = build(plr, head)
+					tags[uid] = t
+					lastSig = "" -- paint the new tag
+				elseif t.bb.Adornee ~= head then
+					t.bb.Adornee = head
+				end
+			elseif t then
+				destroyTag(uid)
+			end
+		end
+	end
+
+	local acc, accSync = 0, 0
+	bind(RunService.Heartbeat, function(dt)
+		if not alive then pcall(function() holder:Destroy() end) return end
+		accSync += dt
+		if accSync >= 0.5 then accSync = 0 pcall(sync) end
+		if not next(tags) then return end
+		pcall(paintAll)
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		local th = HOST.Th
+		local alpha = 1 - math.exp(-dt * 9)
+		local now = os.clock()
+		for uid, t in pairs(tags) do
+			local head = t.bb.Adornee
+			if head and head.Parent then
+				local dist = (head.Position - cam.CFrame.Position).Magnitude
+				local goal = math.clamp((HB.FAR - dist) / (HB.FAR - HB.NEAR), 0, 1)
+				t.mix += (goal - t.mix) * alpha
+				t.bg.GroupTransparency = t.mix
+				t.cg.GroupTransparency = 1 - t.mix
+				t.bg.Visible = t.mix < 0.98
+				t.cg.Visible = t.mix > 0.02
+				-- what the bubble says: their latest message, or the idle label
+				local m = lastMsg[uid]
+				local fresh = m and (now - m.at) < HB.MSG_SECONDS
+				local want = fresh and m.text or ("💬 " .. HB.TEXT)
+				if t.shown ~= want then
+					t.shown = want
+					t.mtxt.Text = want
+					t.mtxt.Font = fresh and Enum.Font.GothamMedium or Enum.Font.GothamBold
+					t.mtxt.TextColor3 = fresh and th.text or T.accA
+				end
+			end
+		end
+	end)
+
+	genv.SaikiHeadBanner = { Set = function(on) HB.ENABLED = on and true or false pcall(sync) end }
 end)()
 
 -- ===== SAIKI SHEET: lay the chat out as cards on the sliding sheet =====
