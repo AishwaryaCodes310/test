@@ -5653,8 +5653,10 @@ end)()
 -- Far away it is a slim banner over the character. When you walk close the banner vanishes (nothing in its place). If that player
 -- then says something in Saiki Rechat server chat, a Saiki chat bubble pops up over them and stays as long as a normal Roblox
 -- chat bubble does, then vanishes. Colours always follow YOUR OWN current theme (Settings > Appearance).
--- Who counts as "running Saiki Rechat in this server": each client writes a heartbeat to /servers/<job>/presence/<id> and reads the
--- others. If the database rules refuse that path it falls back to the Saiki user directory (everyone who has a profile).
+-- Who gets a banner: ONLY players currently running Saiki Rechat in this server. Each client writes a heartbeat to
+-- /servers/<job>/presence/<id> and reads the others; nobody who isn't running it ever shows up (no guessing).
+-- Suggested rules (merge under servers/$job): "presence": { ".read": "auth != null",
+--   "$rid": { ".write": "auth != null && root.child('users').child($rid).val() === auth.uid" } }
 ;(function()
 	local HB = {
 		ENABLED = true,
@@ -5699,12 +5701,15 @@ end)()
 	end
 
 	------------------------------------------------------------- who is running Saiki Rechat here
-	local peers, fallback = {}, false -- peers[userId] = true
+	local peers, warned = {}, false -- peers[userId] = true (only players who announced themselves, nobody else)
 	local base = "/servers/" .. enc(JOB) .. "/presence"
 	local function readPeers()
 		local ok, data, _, code = dbRequest("GET", base, nil, auth, FIREBASE_DB)
 		if not ok then
-			if code == 401 or code == 403 then fallback = true end
+			if (code == 401 or code == 403) and not warned then
+				warned = true
+				warn("[SAIKI RECHAT] Head banner: the knownshangoutchat rules block /servers/$job/presence, so no banners are shown. Allow read + write there (own id only).")
+			end
 			return
 		end
 		local out, maxT = {}, 0
@@ -5726,28 +5731,30 @@ end)()
 			local now = os.clock()
 			if HB.ENABLED and now - lastW >= HB.WRITE_EVERY then
 				lastW = now
-				local ok, _, _, code = dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = cut(LP.DisplayName, 40) }, auth, FIREBASE_DB)
-				if ok then fallback = false elseif code == 401 or code == 403 then fallback = true end
+				dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = cut(LP.DisplayName, 40) }, auth, FIREBASE_DB)
 			end
 			if HB.ENABLED and now - lastR >= HB.READ_EVERY then
 				lastR = now
-				if fallback then
-					local out = {}
-					for _, p in ipairs(Players:GetPlayers()) do
-						if directory and directory[tostring(p.UserId)] then out[p.UserId] = true end
-					end
-					peers = out
-				else
-					readPeers()
-				end
+				readPeers()
 			end
 			task.wait(1)
 		end
+		pcall(dbRequest, "DELETE", base .. "/" .. ME, nil, auth, FIREBASE_DB) -- script closed: stop showing the banner over me
 	end)
 
 	------------------------------------------------------------- the tags
-	local INK = Color3.fromRGB(14, 14, 16)
 	local tags = {} -- [userId] = tag
+	-- the Saiki profile picture shown in the banner (downloaded once and cached on disk; a letter shows until it is ready)
+	local PFP_URL = "https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/Kusuo%20saiki%20_3.jpg"
+	local pfpAsset
+	task.spawn(function()
+		for _ = 1, 4 do
+			if not alive then return end
+			local a = limited(function() return cachedAsset(PFP_URL, CACHE .. "/saiki_banner_pfp.jpg") end)
+			if a then pfpAsset = a return end
+			task.wait(6)
+		end
+	end)
 	local function mkLabel(parent, size, bold)
 		local l = Instance.new("TextLabel")
 		l.BackgroundTransparency = 1
@@ -5771,36 +5778,83 @@ end)()
 		bb.MaxDistance = HB.MAX_DIST
 		bb.Parent = holder
 
-		-- far: banner
+		-- far: banner = [Saiki profile picture in a glowing ring] + "Simple Rechat" + the player's name, on a themed glass card
 		local bg = Instance.new("CanvasGroup")
 		bg.BackgroundTransparency = 1
 		bg.Size = UDim2.fromScale(1, 1)
 		bg.Parent = bb
-		local pill = Instance.new("Frame")
-		pill.AnchorPoint = Vector2.new(0.5, 1)
-		pill.Position = UDim2.new(0.5, 0, 1, -4)
-		pill.AutomaticSize = Enum.AutomaticSize.X
-		pill.Size = UDim2.fromOffset(0, 28)
-		pill.BackgroundColor3 = Color3.new(1, 1, 1)
-		pill.BorderSizePixel = 0
-		pill.Parent = bg
-		Instance.new("UICorner", pill).CornerRadius = UDim.new(0, 14)
-		local pg = Instance.new("UIGradient", pill)
-		local ps = Instance.new("UIStroke", pill)
-		ps.Thickness = 1.5
-		ps.Transparency = 0.35
-		ps.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		local pl = Instance.new("UIListLayout", pill)
-		pl.FillDirection = Enum.FillDirection.Horizontal
-		pl.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		pl.VerticalAlignment = Enum.VerticalAlignment.Center
-		pl.Padding = UDim.new(0, 6)
-		local pp = Instance.new("UIPadding", pill)
-		pp.PaddingLeft, pp.PaddingRight = UDim.new(0, 12), UDim.new(0, 12)
-		local ico = mkLabel(pill, 13, true) ico.Text = "💬" ico.LayoutOrder = 1
-		local ptxt = mkLabel(pill, 13, true) ptxt.Text = HB.TEXT ptxt.TextColor3 = INK ptxt.LayoutOrder = 2
+		local btail = Instance.new("Frame")
+		btail.AnchorPoint = Vector2.new(0.5, 0.5)
+		btail.Position = UDim2.new(0.5, 0, 1, -10)
+		btail.Size = UDim2.fromOffset(11, 11)
+		btail.Rotation = 45
+		btail.BorderSizePixel = 0
+		btail.ZIndex = 1
+		btail.Parent = bg
+		local bts = Instance.new("UIStroke", btail)
+		bts.Thickness = 2 bts.Color = Color3.new(1, 1, 1)
+		bts.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		local btg = Instance.new("UIGradient", bts)
+		local card = Instance.new("Frame")
+		card.AnchorPoint = Vector2.new(0.5, 1)
+		card.Position = UDim2.new(0.5, 0, 1, -10)
+		card.AutomaticSize = Enum.AutomaticSize.X
+		card.Size = UDim2.fromOffset(0, 40)
+		card.BackgroundTransparency = 0.05
+		card.BorderSizePixel = 0
+		card.ZIndex = 2
+		card.Parent = bg
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 20)
+		local cs = Instance.new("UIStroke", card)
+		cs.Thickness = 2 cs.Color = Color3.new(1, 1, 1)
+		cs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		local csg = Instance.new("UIGradient", cs)
+		local cl = Instance.new("UIListLayout", card)
+		cl.FillDirection = Enum.FillDirection.Horizontal
+		cl.VerticalAlignment = Enum.VerticalAlignment.Center
+		cl.Padding = UDim.new(0, 8)
+		cl.SortOrder = Enum.SortOrder.LayoutOrder
+		local cp = Instance.new("UIPadding", card)
+		cp.PaddingLeft, cp.PaddingRight = UDim.new(0, 5), UDim.new(0, 15)
+		local ring = Instance.new("Frame")
+		ring.Size = UDim2.fromOffset(30, 30)
+		ring.BackgroundColor3 = Color3.new(1, 1, 1)
+		ring.BorderSizePixel = 0
+		ring.LayoutOrder = 1
+		ring.ZIndex = 3
+		ring.Parent = card
+		Instance.new("UICorner", ring).CornerRadius = UDim.new(1, 0)
+		local rg = Instance.new("UIGradient", ring)
+		local pfp = Instance.new("ImageLabel")
+		pfp.Position = UDim2.fromOffset(2, 2)
+		pfp.Size = UDim2.new(1, -4, 1, -4)
+		pfp.ScaleType = Enum.ScaleType.Crop
+		pfp.BorderSizePixel = 0
+		pfp.ZIndex = 4
+		pfp.Parent = ring
+		Instance.new("UICorner", pfp).CornerRadius = UDim.new(1, 0)
+		local letter = Instance.new("TextLabel")
+		letter.BackgroundTransparency = 1
+		letter.Size = UDim2.fromScale(1, 1)
+		letter.Font = Enum.Font.GothamBlack
+		letter.TextSize = 15
+		letter.Text = "S"
+		letter.ZIndex = 5
+		letter.Parent = pfp
+		local col = Instance.new("Frame")
+		col.BackgroundTransparency = 1
+		col.AutomaticSize = Enum.AutomaticSize.X
+		col.Size = UDim2.fromOffset(0, 30)
+		col.LayoutOrder = 2
+		col.ZIndex = 3
+		col.Parent = card
+		local cll = Instance.new("UIListLayout", col)
+		cll.VerticalAlignment = Enum.VerticalAlignment.Center
+		cll.SortOrder = Enum.SortOrder.LayoutOrder
+		local title = mkLabel(col, 13, true) title.Text = HB.TEXT title.LayoutOrder = 1 title.ZIndex = 3
+		local sub = mkLabel(col, 10, true) sub.Text = "@" .. cut(plr.DisplayName, 16) sub.LayoutOrder = 2 sub.ZIndex = 3
 
-		-- near: chat bubble
+		-- near: chat bubble (only shown while this player's Saiki Rechat message is fresh)
 		local cg = Instance.new("CanvasGroup")
 		cg.BackgroundTransparency = 1
 		cg.Size = UDim2.fromScale(1, 1)
@@ -5841,8 +5895,8 @@ end)()
 		local msz = Instance.new("UISizeConstraint", mtxt)
 		msz.MaxSize = Vector2.new(220, 80)
 
-		return { plr = plr, bb = bb, bg = bg, cg = cg, pg = pg, ps = ps, ico = ico, bub = bub, bs = bs, tail = tail, ts = ts,
-			mtxt = mtxt, mix = 0, shown = "" }
+		return { plr = plr, bb = bb, bg = bg, cg = cg, card = card, btail = btail, csg = csg, btg = btg, rg = rg, pfp = pfp, letter = letter,
+			title = title, sub = sub, bub = bub, bs = bs, tail = tail, ts = ts, mtxt = mtxt, mix = 0, shown = "" }
 	end
 
 	local lastSig = ""
@@ -5851,14 +5905,21 @@ end)()
 		local sig = table.concat({ tostring(T.accA), tostring(T.accB), tostring(th.cardA), tostring(th.cardB), tostring(th.text) }, "|")
 		if sig == lastSig then return false end
 		lastSig = sig
+		local glow = ColorSequence.new({ ColorSequenceKeypoint.new(0, T.accA), ColorSequenceKeypoint.new(0.5, T.accB), ColorSequenceKeypoint.new(1, T.accA) })
 		for _, t in pairs(tags) do
-			t.pg.Color = ColorSequence.new(T.accA, T.accB)
-			t.ps.Color = T.accB
+			t.card.BackgroundColor3 = th.cardB
+			t.btail.BackgroundColor3 = th.cardB
+			t.csg.Color, t.btg.Color = glow, glow
+			t.rg.Color = glow
+			t.pfp.BackgroundColor3 = th.cardA
+			t.letter.TextColor3 = T.accA
+			t.title.TextColor3 = th.text
+			t.sub.TextColor3 = T.accA
 			t.bub.BackgroundColor3 = th.cardB
 			t.tail.BackgroundColor3 = th.cardB
 			t.bs.Color, t.ts.Color = T.accA, T.accA
 			t.mtxt.TextColor3 = th.text
-			t.shown = "" -- re-apply text colour rule below
+			t.shown = "" -- re-apply the bubble text colour
 		end
 		return true
 	end
@@ -5914,6 +5975,11 @@ end)()
 				local dist = (head.Position - cam.CFrame.Position).Magnitude
 				local goal = math.clamp((HB.FAR - dist) / (HB.FAR - HB.NEAR), 0, 1)
 				t.mix += (goal - t.mix) * alpha
+				t.csg.Rotation = (now * 70) % 360
+				t.btg.Rotation = t.csg.Rotation
+				t.rg.Rotation = (-now * 90) % 360
+				t.bb.StudsOffsetWorldSpace = Vector3.new(0, HB.LIFT + math.sin(now * 2 + (uid % 7)) * 0.07, 0)
+				if pfpAsset and t.pfp.Image ~= pfpAsset then t.pfp.Image = pfpAsset t.letter.Visible = false end
 				-- banner: only when far (fades out completely when close, nothing replaces it)
 				t.bg.GroupTransparency = t.mix
 				t.bg.Visible = t.mix < 0.98
