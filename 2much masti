@@ -285,7 +285,7 @@ local CARD_R = {
     SetCategories = 28, SetMain = 18, SetQuick = 26, SetSupport = 30,
     GfxCategories = 28, GfxMain = 18, GfxQuick = 26, GfxFps = 30,
     SkyList = 20, SkyDetail = 28, SkyAdjust = 22,
-    MusicNowPlaying = 24, MusicQueue = 18, MusicLibrary = 18, MusicSave = 26, MusicPlayback = 26, MusicSearchKey = 22,
+    MusicMode = 22, MusicNowPlaying = 24, MusicQueue = 18, MusicLibrary = 18, MusicSave = 26, MusicPlayback = 26, MusicSearchKey = 22,
 }
 
 -- a column is a vertical stack of cards; cards are the boxes of the collage
@@ -1336,13 +1336,19 @@ HOST.Run("Chat", function()
 repeat task.wait() until game:IsLoaded()
 
 ----------------------------------------------------------------- config
-local FIREBASE_DB       = "https://sxkicxat-default-rtdb.asia-southeast1.firebasedatabase.app"
-local FIREBASE_API_KEY  = "AIzaSyCgvkvar8qhD3zqYC83BW6GHxGQVYoDhrM"
-local DM_FIREBASE_DB    = "https://sxkidirect-default-rtdb.asia-southeast1.firebasedatabase.app"
-local DM_FIREBASE_API_KEY = "AIzaSyALza0_S-MNAmZanYMrH15WJGAZMJ_RYW4"
+-- knownshangoutchat = server chat, reactions and the profile directory
+-- knownshangoutdm   = DMs, moderation (kick/mute/titles/frames), music permissions and the Roblox-id login link
+-- (knownshangoutmusic is not used by this script; keep its rules on deny-all)
+local FIREBASE_DB       = "https://knownshangoutchat-default-rtdb.asia-southeast1.firebasedatabase.app"
+local FIREBASE_API_KEY  = "AIzaSyAmcT_cHocfNACisfapnq1AGkWEseDZ9Sw"
+local DM_FIREBASE_DB    = "https://knownshangoutdm-default-rtdb.asia-southeast1.firebasedatabase.app"
+local DM_FIREBASE_API_KEY = "AIzaSyCTZI3qktap24Elb3tecBFWCNMSnvXse48"
 
+if #FIREBASE_API_KEY ~= 39 then
+	warn("[SAIKI RECHAT] FIREBASE_API_KEY (knownshangoutchat) is not set yet: paste its 39-character Web API key (Project settings > General).")
+end
 if #DM_FIREBASE_API_KEY ~= 39 then
-	warn("[SAIKI RECHAT] DM_FIREBASE_API_KEY is " .. #DM_FIREBASE_API_KEY .. " chars; Firebase web API keys are 39. Re-copy it from Project settings > General.")
+	warn("[SAIKI RECHAT] DM_FIREBASE_API_KEY (knownshangoutdm) is not set yet: paste its 39-character Web API key (Project settings > General).")
 end
 
 
@@ -1576,7 +1582,7 @@ local ALLOWED_REACT = {}
 for _, e in ipairs(REACTIONS) do ALLOWED_REACT[e] = true end
 local function safeName(s) return (tostring(s):gsub("[^%w_%-%.]", "_")) end
 
------------------------------------------------------------------ Firebase (anonymous auth, 3 projects)
+----------------------------------------------------------------- Firebase (anonymous auth, 2 projects)
 -- Each project gets one session object. The anonymous login is SAVED to disk (refresh token), so the same
 -- Firebase uid is reused every launch (no sign-up spam / rate limits, and follower data stays yours).
 local auth, dmAuth, ensureToken -- filled in below
@@ -1611,8 +1617,8 @@ do -- login helpers stay private to this block (keeps the script under Luau's 20
 local function newAuth(name, key)
 	return { name = name, key = key, token = nil, refresh = nil, uid = nil, exp = 0, busy = false, loaded = false, err = nil }
 end
-auth = newAuth("sxkicxat", FIREBASE_API_KEY)
-dmAuth = newAuth("sxkidirect", DM_FIREBASE_API_KEY)
+auth = newAuth("knownschat", FIREBASE_API_KEY)
+dmAuth = newAuth("knownsdm", DM_FIREBASE_API_KEY)
 
 local function sessionPath(t) return CACHE .. "/session_" .. t.name .. "_" .. ME .. ".json" end
 local function loadSession(t)
@@ -1695,7 +1701,7 @@ end
 
 end -- login helpers
 
-local function dbRequest(method, path, body, target, base, extra)
+local function dbRequestRaw(method, path, body, target, base, extra)
 	target, base = target or auth, base or FIREBASE_DB
 	if not ensureToken(target) then return false, nil, "auth failed: " .. tostring(target.err), nil end
 	local used, refreshed, tries = target.token, false, 0
@@ -1717,7 +1723,50 @@ local function dbRequest(method, path, body, target, base, extra)
 	return ok, data, raw, code
 end
 
--- log in to all three projects right away so the first message never waits on a login
+-- Chat identity: like the DM project, the chat project ties your Roblox id to your login, so nobody can post, react or
+-- edit a profile as someone else (moderator announcements and music broadcasts rely on this).
+local chatIdState = { ok = false, busy = false, retryAt = 0, warned = false }
+function T.chatId()
+	local st = chatIdState
+	if st.ok or not REQUEST then return st.ok end
+	if st.busy then
+		local w = 0
+		while st.busy and w < 15 do task.wait(0.1); w = w + 0.1 end
+		return st.ok
+	end
+	if os.clock() < st.retryAt then return false end
+	st.busy = true
+	local good, why = false, nil
+	if ensureToken(auth) and auth.uid then
+		local uid = tostring(auth.uid)
+		local ok1, _, _, c1 = dbRequestRaw("PUT", "/users/" .. ME, '"' .. uid .. '"', auth, FIREBASE_DB)
+		if ok1 then
+			local ok2, _, _, c2 = dbRequestRaw("PUT", "/uidmap/" .. uid, '"' .. ME .. '"', auth, FIREBASE_DB)
+			good = ok2 and true or false
+			if not ok2 then why = "uidmap HTTP " .. tostring(c2) end
+		else
+			why = "users HTTP " .. tostring(c1)
+		end
+	else
+		why = "chat login not ready"
+	end
+	st.ok, st.busy = good, false
+	if not good then
+		st.retryAt = os.clock() + 30
+		if not st.warned then
+			st.warned = true
+			warn("[SAIKI RECHAT] Chat identity not registered (" .. tostring(why) .. "). Publish the knownshangoutchat rules; if this Roblox id was linked to another login, delete /users/" .. ME .. " in the knownshangoutchat database.")
+		end
+	end
+	return good
+end
+
+local function dbRequest(method, path, body, target, base, extra)
+	if method ~= "GET" and (target or auth) == auth then T.chatId() end
+	return dbRequestRaw(method, path, body, target, base, extra)
+end
+
+-- log in to both projects right away so the first message never waits on a login
 if REQUEST then
 	task.spawn(function()
 		for _, t in ipairs({ auth, dmAuth }) do
@@ -1725,6 +1774,7 @@ if REQUEST then
 				warn("[SAIKI RECHAT] login FAILED for " .. t.name .. ": " .. tostring(t.err) .. " (check that project's Web API key and Authentication > Anonymous)")
 			end
 		end
+		T.chatId()
 	end)
 end
 
@@ -2625,7 +2675,7 @@ do
 			st.retryAt = os.clock() + 30
 			if not st.warned then
 				st.warned = true
-				warn("[SAIKI RECHAT] DM identity not registered (" .. tostring(why) .. "). Publish the new sxkidirect rules; if this Roblox id was linked to another DM login, delete /users/" .. ME .. " in the Firebase console.")
+				warn("[SAIKI RECHAT] DM identity not registered (" .. tostring(why) .. "). Publish the knownshangoutdm rules; if this Roblox id was linked to another DM login, delete /users/" .. ME .. " in the Firebase console.")
 				if T.notify then T.notify("dmid", "DMs not linked yet", "New DMs can't reach you until your DM login is linked. Details are in the F9 console.") end
 			end
 		end
@@ -2660,7 +2710,7 @@ views[1] = ChatView(container, function(p)
 				T.showServer(ME, LP.DisplayName, p.text or "", p.stk, res.name, p.reply, false)
 			end
 		else
-			sendFail(views[1], raw, code, "sxkicxat " .. serverStream.path)
+			sendFail(views[1], raw, code, "knownshangoutchat " .. serverStream.path)
 		end
 	end)
 end, CONFIG.COOLDOWN_SERVER, "Message Saiki Server", function(key, e)
@@ -2689,6 +2739,10 @@ function T.showServer(uid, name, text, stk, key, reply, silent)
 		if not silent and not HOST.ChatSees(1) and tostring(uid) ~= ME and T.notify then -- window closed: pop-up for new server chat messages
 			T.notify("srv", "Server chat  ·  " .. name, stk and "Sticker" or text)
 		end
+	end
+	if (not stk) and type(text) == "string" and text:sub(1, 12):lower() == "!saikimusic " then -- hidden music command from a moderator
+		if not silent and tostring(uid) ~= ME and HOST.Music and HOST.Music.onRemote then pcall(HOST.Music.onRemote, tostring(uid), text) end
+		return
 	end
 	if (not stk) and text == (CONFIG.WELCOME_TEXT or "joined Saiki Rechat") then -- quiet welcome line (no unread dot, no sound, no pop-up)
 		views[1].addWelcome({ name = name, color = T.tierColor and T.tierColor(uid) or nil })
@@ -3240,7 +3294,7 @@ views.dm = ChatView(thread, function(p)
 				end
 			end
 		else
-			sendFail(views.dm, raw, code, "sxkidirect " .. s.path)
+			sendFail(views.dm, raw, code, "knownshangoutdm " .. s.path)
 		end
 	end)
 end, CONFIG.COOLDOWN_DM, "Message", function(key, e)
@@ -3346,7 +3400,7 @@ local function pollInbox()
 	if not ok then
 		if not T.inboxWarned then
 			T.inboxWarned = true
-			warn("[SAIKI RECHAT] couldn't read your DM inbox (HTTP " .. tostring(code) .. "). New DMs won't show in Recent until this works; publish the latest sxkidirect rules.")
+			warn("[SAIKI RECHAT] couldn't read your DM inbox (HTTP " .. tostring(code) .. "). New DMs won't show in Recent until this works; publish the knownshangoutdm rules.")
 			if T.notify then T.notify("dminbox", "Can't read your DMs", "New DMs won't show until this works (HTTP " .. tostring(code) .. "). See the F9 console.") end
 		end
 		return
@@ -3907,6 +3961,7 @@ end)()
 
 	local function nowMs() return os.time() * 1000 end
 	function T.isMod(id) return ids[tostring(id)] == true end
+	function T.modsReady() return ready end
 	function T.isMuted(id)
 		local tid = tostring(id)
 		local u = T.muted[tid]
@@ -4038,7 +4093,7 @@ end)()
 	end
 
 	-------- commands
-	local CMDS = { "!saikikick", "!saikianc", "!giveframe", "!saikicustomtitle", "!saikimute" }
+	local CMDS = { "!saikikick", "!saikianc", "!giveframe", "!saikicustomtitle", "!saikimute", "!musicallow", "!musicremove" }
 	local function isCmd(w) for _, c in ipairs(CMDS) do if c == w then return true end end return false end
 
 	-- username -> userId, also for players who are not in this server
@@ -4119,6 +4174,12 @@ end)()
 				ok, _, _, code = put("/mods/title/" .. id .. "/" .. me, { ts = SV, t = t })
 				view.notice(ok and (shown .. " now has the tag [" .. t .. "].") or ("Couldn't set the tag (HTTP " .. tostring(code) .. ")."))
 			end
+		elseif cmd == "!musicallow" then
+			ok, _, _, code = put("/mods/music/" .. id .. "/" .. me, SV)
+			view.notice(ok and (shown .. " can now see the Music tab. Only moderators and the music admins can broadcast to the server.") or ("Couldn't allow music (HTTP " .. tostring(code) .. "). Publish the new DM rules?"))
+		elseif cmd == "!musicremove" then
+			ok, _, _, code = del("/mods/music/" .. id .. "/" .. me)
+			view.notice(ok and ("Your music permission for " .. shown .. " is removed. If another moderator also allowed them, they keep the tab until that one is removed too.") or ("Couldn't remove it (HTTP " .. tostring(code) .. ")."))
 		elseif cmd == "!giveframe" then
 			local fword, off = rest:match("^(%S+)%s*(%S*)$")
 			if not fword then view.notice("Usage: !giveframe <username> <frame> [off]"); return end
@@ -4133,6 +4194,7 @@ end)()
 			end
 		end
 		if ok then pollMods() end
+		if ok and (cmd == "!musicallow" or cmd == "!musicremove") and T.pollMusic then pcall(T.pollMusic) end
 	end
 
 	-- called from the chat box; true = handled (the text is never sent as a message)
@@ -4142,7 +4204,8 @@ end)()
 		cmd = cmd:lower()
 		if not isCmd(cmd) then return false end
 		if not ready then view.notice("The moderator list is still loading, try again in a moment."); return true end
-		if not T.isMod(ME) then view.notice("Moderator commands are for Saiki Rechat moderators only."); return true end
+		local musicCmd = (cmd == "!musicallow" or cmd == "!musicremove")
+		if not (T.isMod(ME) or (musicCmd and T.isMusicAdmin and T.isMusicAdmin(ME))) then view.notice("Moderator commands are for Saiki Rechat moderators only."); return true end
 		local args = txt:match("^%S+%s+(.*)$") or ""
 		task.spawn(function()
 			local ok, err = pcall(runCmd, view, cmd, args)
@@ -4218,6 +4281,91 @@ end)()
 			pcall(loadMods)
 		end
 	end)
+end)()
+
+----------------------------------------------------------------- music access + broadcast bridge (used by the Music module)
+-- Who sees the Music tab: the music admins below, every moderator, and anyone a moderator allowed with !musicallow <user>.
+-- Who can broadcast to the server: the music admins and moderators. Everybody using the script hears a broadcast.
+;(function()
+	local OWNERS = { "yorichii_566", "Moosman99999", "professor200785", "Kabir_Priv" }
+	local OFILE = CACHE .. "/musicadmins.json"
+	local ownerIds, grants = {}, {}
+	local cache = {}
+	pcall(function()
+		if isfile and readfile and isfile(OFILE) then
+			local d = HttpService:JSONDecode(readfile(OFILE))
+			if type(d) == "table" then cache = d end
+		end
+	end)
+	for _, id in pairs(cache) do ownerIds[tostring(id)] = true end
+	task.spawn(function()
+		local out = {}
+		for _, nm in ipairs(OWNERS) do
+			local low = nm:lower()
+			local id
+			if low == LP.Name:lower() then
+				id = string.format("%.0f", LP.UserId)
+			else
+				local ok, res = pcall(function() return Players:GetUserIdFromNameAsync(nm) end)
+				id = (ok and res) and string.format("%.0f", res) or cache[low]
+			end
+			if id then out[low] = id ownerIds[tostring(id)] = true end
+		end
+		pcall(function() if writefile then writefile(OFILE, HttpService:JSONEncode(out)) end end)
+	end)
+
+	function T.isMusicAdmin(id)
+		id = tostring(id)
+		return ownerIds[id] == true or (T.isMod ~= nil and T.isMod(id))
+	end
+	function T.canMusic(id)
+		id = tostring(id)
+		return T.isMusicAdmin(id) or grants[id] == true
+	end
+
+	-- permissions given by moderators: /mods/music/<userId>/<moderatorId>
+	function T.pollMusic()
+		if not REQUEST then return end
+		T.dmId()
+		local ok, data = dbRequest("GET", "/mods/music", nil, dmAuth, DM_FIREBASE_DB)
+		if not ok then return end
+		local g = {}
+		if type(data) == "table" then
+			for target, byMap in pairs(data) do
+				if type(byMap) == "table" then
+					for by in pairs(byMap) do
+						if T.isMusicAdmin(by) then g[tostring(target)] = true break end
+					end
+				end
+			end
+		end
+		grants = g
+	end
+	task.spawn(function()
+		local got = false
+		while alive do
+			if T.modsReady and T.modsReady() then
+				pcall(T.pollMusic)
+				got = true
+			end
+			task.wait(got and 15 or 2)
+		end
+	end)
+
+	-- send a hidden command line to this server's chat (the chat hides it; scripts of other players act on it)
+	function T.postRawServer(text)
+		if not REQUEST then return false end
+		local ok, res = dbRequest("POST", serverStream.path, payload({ text = text }), auth, FIREBASE_DB)
+		if ok and type(res) == "table" and res.name then serverStream.seen[res.name] = true end
+		return ok == true
+	end
+
+	local B = HOST.Music or {}
+	HOST.Music = B
+	B.canUse = function() return T.canMusic(ME) end
+	B.canBroadcast = function() return T.isMusicAdmin(ME) end
+	B.isAdmin = function(id) return T.isMusicAdmin(id) end
+	B.send = T.postRawServer
 end)()
 
 ----------------------------------------------------------------- scheduler (one loop for everything)
@@ -5102,8 +5250,8 @@ end)()
 end)
 
 --==================== SAIKI MUSIC MODULE (TATrMusic audio engine) ====================
--- Open to EVERYONE (no rank / tier / follower checks anywhere in here).
--- Cards: Now playing + Queue | Library | Save a song + Playback | YouTube search key
+-- The engine runs for everyone (so broadcasts can be heard); the Music CARDS only exist for music admins, moderators and
+-- people a moderator allowed. Cards: Who hears it + Now playing + Queue | Library | Save a song + Playback | YouTube search key
 HOST.Run("Music", function()
 	if not HOST.Column then return end
 	local HttpService = game:GetService("HttpService")
@@ -5232,6 +5380,8 @@ HOST.Run("Music", function()
 		repeatMode = 0,     -- 0 off, 1 all, 2 one
 		server = "",        -- your own audio server (optional)
 		serverKey = "",
+		mode = "private",   -- private = only you hear it, broadcast = everyone in this server using Saiki Rechat (moderators)
+		hear = true,        -- hear moderators' broadcasts
 	}
 	pcall(function()
 		if CAN_FILES and isfile(DATA_FILE) then
@@ -5243,6 +5393,7 @@ HOST.Run("Music", function()
 			end
 		end
 	end)
+	D.mode = "private" -- always start private
 	local savePending = false
 	local function saveData()
 		if savePending or not CAN_FILES then return end
@@ -5350,6 +5501,20 @@ HOST.Run("Music", function()
 	local refreshAll, refreshLibrary, refreshQueue, refreshNow -- forward declarations
 
 	local function current() return P.queue[P.idx] end
+
+	-- broadcast: only moderators / music admins, only while the mode is "Broadcast"
+	local function isBroadcaster()
+		return D.mode == "broadcast" and HOST.Music ~= nil and HOST.Music.canBroadcast ~= nil and HOST.Music.canBroadcast() == true
+	end
+	local function bc(cmd, song)
+		if P.fromRemote or not isBroadcaster() or not HOST.Music.send then return end
+		local text = "!saikimusic " .. cmd
+		if song then
+			local nm = tostring(song.name or ""):gsub("%c", " ")
+			text = text .. " " .. song.id .. " " .. clip(nm, 90)
+		end
+		task.spawn(function() pcall(HOST.Music.send, text) end)
+	end
 
 	local function trimCache()
 		pcall(function()
@@ -5535,6 +5700,7 @@ HOST.Run("Music", function()
 		if not song then return end
 		P.token += 1
 		local token = P.token
+		bc("play", song)
 		P.progress = nil
 		P.status = "loading" -- set first: stopping the old song must not look like "song finished"
 		pcall(function() snd:Stop() end)
@@ -5685,15 +5851,42 @@ HOST.Run("Music", function()
 		elseif snd.Playing then
 			snd:Pause()
 			setStatus("paused")
+			bc("pause")
 		else
 			snd:Resume()
 			setStatus("playing")
+			bc("resume")
 		end
 	end
 
 	snd.Ended:Connect(function()
 		if P.status == "playing" then stepNext(true) end
 	end)
+
+	-- a moderator is broadcasting to this server: do what they do (never re-broadcast it)
+	HOST.Music = HOST.Music or {}
+	HOST.Music.onRemote = function(uid, text)
+		if D.hear == false or not (HOST.Music.isAdmin and HOST.Music.isAdmin(uid)) then return end
+		local cmd, rest = text:match("^!saikimusic%s+(%S+)%s*(.*)$")
+		if cmd == "play" then
+			local id, name = rest:match("^([%w_%-]+)%s*(.*)$")
+			if not id or #id ~= 11 then return end
+			local song = mkSong(name ~= "" and name or "Broadcast", watchUrl(id), "Broadcast")
+			if not song then return end
+			P.fromRemote = true
+			pcall(playOne, song)
+			P.fromRemote = false
+		elseif cmd == "pause" then
+			if snd.Playing then snd:Pause() setStatus("paused") end
+		elseif cmd == "resume" then
+			if P.status == "paused" then snd:Resume() setStatus("playing") end
+		elseif cmd == "stop" then
+			P.token += 1
+			P.status = "idle"
+			pcall(function() snd:Stop() end)
+			setStatus("idle")
+		end
+	end
 
 	----------------------------------------------------------------- likes / saved
 	local function setLiked(song, on)
@@ -5772,586 +5965,667 @@ HOST.Run("Music", function()
 		end)
 	end
 
-	----------------------------------------------------------------- CARDS
-	local cA = HOST.Column(MUSIC.SECTION, 300)
-	local cB = HOST.Column(MUSIC.SECTION, 400)
-	local cC = HOST.Column(MUSIC.SECTION, 290)
-	local cD = HOST.Column(MUSIC.SECTION, 310)
-	local cols = { cA, cB, cC, cD }
+	----------------------------------------------------------------- CARDS (only built for people allowed to use Music)
+	local cols = {}
+	local uiBuilt = false
+	local running = true
+	local function buildUI()
+		if uiBuilt then return end
+		uiBuilt = true
+		local cA = HOST.Column(MUSIC.SECTION, 300)
+		local cB = HOST.Column(MUSIC.SECTION, 400)
+		local cC = HOST.Column(MUSIC.SECTION, 290)
+		local cD = HOST.Column(MUSIC.SECTION, 310)
+		cols = { cA, cB, cC, cD }
 
-	----------------------------------------------------------------- card: Now playing
-	do
-		local st = cA.Card(222, "MusicNowPlaying")
-		txt(st, "Now playing", 12, true, TXT, 16, 12, 150, 16)
-		ui.statusLbl = txt(st, "", 10, false, MUT, 150, 12, 134, 16, RIGHT)
-
-		local coverBox = new("Frame", { Position = UDim2.fromOffset(16, 36), Size = UDim2.fromOffset(64, 64), BackgroundColor3 = FIELD, BorderSizePixel = 0, ClipsDescendants = true }, st)
-		rc(coverBox, 12)
-		line(coverBox, 0.92)
-		ui.coverNote = txt(coverBox, "♪", 26, true, MUT, 0, 0, 64, 64, CENTER)
-		ui.cover = new("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Crop, Image = "" }, coverBox)
-
-		ui.title = txt(st, "Nothing playing", 13, true, TXT, 92, 40, 156, 18)
-		ui.sub = txt(st, "Pick a song from your library", 10, false, MUT, 92, 60, 156, 28)
-		ui.sub.TextWrapped = true
-		ui.sub.TextYAlignment = Enum.TextYAlignment.Top
-		ui.heart = button(st, "♥", 252, 38, 32, 28, BTN, MUT, function()
-			local s = current()
-			if s then setLiked(s, not isLiked(s)) end
-		end, 15)
-
-		-- progress
-		ui.prog = {}
+		-- card: who hears your music (private / broadcast)
 		do
-			local track = new("Frame", { Position = UDim2.fromOffset(16, 118), Size = UDim2.fromOffset(268, 4), BackgroundColor3 = Color3.fromRGB(48, 48, 56), BorderSizePixel = 0 }, st)
-			rc(track, 4)
-			local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
-			rc(fill, 4)
-			local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
-			rc(knob, 10)
-			local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 108), Size = UDim2.fromOffset(280, 24) }, st)
-			ui.tCur = txt(st, "0:00", 10, false, MUT, 16, 124, 60, 14)
-			ui.tLen = txt(st, "0:00", 10, false, MUT, 224, 124, 60, 14, RIGHT)
-			local dragging, dragR = false, 0
-			local function place(r)
-				fill.Size = UDim2.fromScale(r, 1)
-				knob.Position = UDim2.fromScale(r, 0.5)
-			end
-			local function fromInput(x)
-				local r = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
-				dragR = r
-				place(r)
-				ui.tCur.Text = fmt(r * snd.TimeLength)
-			end
-			hit.InputBegan:Connect(function(i)
-				if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-					if snd.TimeLength <= 0 then return end
-					dragging = true
-					if HOST.Scroll then HOST.Scroll.ScrollingEnabled = false end
-					fromInput(i.Position.X)
+			local st = cA.Card(88, "MusicMode")
+			txt(st, "Who hears your music?", 12, true, TXT, 16, 10, 220, 16)
+			local note = txt(st, "", 10, false, MUT, 16, 64, 268, 16)
+			local bPriv, bCast, bHear
+			local function paint()
+				local can = HOST.Music and HOST.Music.canBroadcast and HOST.Music.canBroadcast() or false
+				bPriv.Visible, bCast.Visible, bHear.Visible = can, can, not can
+				if can then
+					local cast = D.mode == "broadcast"
+					bPriv.BackgroundColor3, bPriv.TextColor3 = cast and BTN or WHITE, cast and TXT or INK
+					bCast.BackgroundColor3, bCast.TextColor3 = cast and WHITE or BTN, cast and INK or TXT
+					note.Text = cast and "Everyone in this server using Saiki Rechat hears it." or "Only you hear what you play."
+					note.TextColor3 = cast and GREEN or MUT
+				else
+					local on = D.hear ~= false
+					bHear.Text = on and "Hearing server broadcasts: ON" or "Hearing server broadcasts: OFF"
+					bHear.BackgroundColor3, bHear.TextColor3 = on and WHITE or BTN, on and INK or TXT
+					note.Text = "Moderators can play music for the whole server."
+					note.TextColor3 = MUT
 				end
-			end)
-			UIS.InputChanged:Connect(function(i)
-				if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then fromInput(i.Position.X) end
-			end)
-			UIS.InputEnded:Connect(function(i)
-				if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
-					dragging = false
-					if HOST.Scroll then HOST.Scroll.ScrollingEnabled = true end
-					pcall(function() snd.TimePosition = dragR * snd.TimeLength end)
-				end
-			end)
-			ui.prog.place = place
-			ui.prog.isDragging = function() return dragging end
+			end
+			bPriv = button(st, "Listen private", 14, 32, 128, 26, BTN, TXT, function()
+				if D.mode == "broadcast" then bc("stop") end -- ends the music for the server too
+				D.mode = "private"
+				saveData()
+				paint()
+			end, 12)
+			bCast = button(st, "Broadcast", 148, 32, 128, 26, BTN, TXT, function()
+				D.mode = "broadcast"
+				saveData()
+				paint()
+				local s = current()
+				if s and (P.status == "playing" or P.status == "loading") then bc("play", s) end
+			end, 12)
+			bHear = button(st, "", 14, 32, 262, 26, BTN, TXT, function()
+				D.hear = not (D.hear ~= false)
+				saveData()
+				paint()
+			end, 12)
+			ui.paintMode = paint
+			paint()
 		end
 
-		-- controls: shuffle | prev | play/pause | next | repeat
-		ui.shuffleBtn = button(st, "Shuffle", 16, 154, 56, 24, BTN, MUT, function()
-			D.shuffle = not D.shuffle
-			saveData()
-			refreshNow()
-		end, 10)
-		local function iconButton(x, y, size, bg)
-			local b = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = bg, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(size, size) }, st)
-			rc(b, size)
-			return b
-		end
-		local prev = iconButton(96, 150, 32, BTN)
-		txt(prev, "◀", 11, true, TXT, 7, 0, 16, 32, CENTER)
-		new("Frame", { BackgroundColor3 = TXT, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 10), Size = UDim2.fromOffset(2, 12) }, prev)
-		prev.Activated:Connect(stepPrev)
-
-		local play = iconButton(134, 144, 44, WHITE)
-		ui.playGlyph = txt(play, "▶", 17, true, INK, 2, 0, 44, 44, CENTER)
-		ui.pauseA = new("Frame", { BackgroundColor3 = INK, BorderSizePixel = 0, Position = UDim2.fromOffset(15, 14), Size = UDim2.fromOffset(5, 16), Visible = false }, play)
-		ui.pauseB = new("Frame", { BackgroundColor3 = INK, BorderSizePixel = 0, Position = UDim2.fromOffset(24, 14), Size = UDim2.fromOffset(5, 16), Visible = false }, play)
-		play.Activated:Connect(togglePlay)
-
-		local nxt = iconButton(184, 150, 32, BTN)
-		txt(nxt, "▶", 11, true, TXT, 9, 0, 16, 32, CENTER)
-		new("Frame", { BackgroundColor3 = TXT, BorderSizePixel = 0, Position = UDim2.fromOffset(22, 10), Size = UDim2.fromOffset(2, 12) }, nxt)
-		nxt.Activated:Connect(function() stepNext(false) end)
-
-		ui.repeatBtn = button(st, "Repeat", 228, 154, 56, 24, BTN, MUT, function()
-			D.repeatMode = (D.repeatMode + 1) % 3
-			saveData()
-			refreshNow()
-		end, 10)
-
-		-- volume
-		txt(st, "Volume", 10, false, MUT, 16, 194, 50, 14)
+		----------------------------------------------------------------- card: Now playing
 		do
-			local track = new("Frame", { Position = UDim2.fromOffset(66, 199), Size = UDim2.fromOffset(176, 4), BackgroundColor3 = Color3.fromRGB(48, 48, 56), BorderSizePixel = 0 }, st)
-			rc(track, 4)
-			local fill = new("Frame", { Size = UDim2.fromScale(D.volume, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
-			rc(fill, 4)
-			local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(D.volume, 0.5), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
-			rc(knob, 10)
-			local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(60, 190), Size = UDim2.fromOffset(188, 22) }, st)
-			local pct = txt(st, math.floor(D.volume * 100 + 0.5) .. "%", 10, false, MUT, 250, 194, 34, 14, RIGHT)
-			local dragging = false
-			local function setV(x)
-				local r = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
-				D.volume = r
-				snd.Volume = r
-				fill.Size = UDim2.fromScale(r, 1)
-				knob.Position = UDim2.fromScale(r, 0.5)
-				pct.Text = math.floor(r * 100 + 0.5) .. "%"
-			end
-			hit.InputBegan:Connect(function(i)
-				if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-					dragging = true
-					if HOST.Scroll then HOST.Scroll.ScrollingEnabled = false end
-					setV(i.Position.X)
+			local st = cA.Card(222, "MusicNowPlaying")
+			txt(st, "Now playing", 12, true, TXT, 16, 12, 150, 16)
+			ui.statusLbl = txt(st, "", 10, false, MUT, 150, 12, 134, 16, RIGHT)
+
+			local coverBox = new("Frame", { Position = UDim2.fromOffset(16, 36), Size = UDim2.fromOffset(64, 64), BackgroundColor3 = FIELD, BorderSizePixel = 0, ClipsDescendants = true }, st)
+			rc(coverBox, 12)
+			line(coverBox, 0.92)
+			ui.coverNote = txt(coverBox, "♪", 26, true, MUT, 0, 0, 64, 64, CENTER)
+			ui.cover = new("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ScaleType = Enum.ScaleType.Crop, Image = "" }, coverBox)
+
+			ui.title = txt(st, "Nothing playing", 13, true, TXT, 92, 40, 156, 18)
+			ui.sub = txt(st, "Pick a song from your library", 10, false, MUT, 92, 60, 156, 28)
+			ui.sub.TextWrapped = true
+			ui.sub.TextYAlignment = Enum.TextYAlignment.Top
+			ui.heart = button(st, "♥", 252, 38, 32, 28, BTN, MUT, function()
+				local s = current()
+				if s then setLiked(s, not isLiked(s)) end
+			end, 15)
+
+			-- progress
+			ui.prog = {}
+			do
+				local track = new("Frame", { Position = UDim2.fromOffset(16, 118), Size = UDim2.fromOffset(268, 4), BackgroundColor3 = Color3.fromRGB(48, 48, 56), BorderSizePixel = 0 }, st)
+				rc(track, 4)
+				local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
+				rc(fill, 4)
+				local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
+				rc(knob, 10)
+				local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 108), Size = UDim2.fromOffset(280, 24) }, st)
+				ui.tCur = txt(st, "0:00", 10, false, MUT, 16, 124, 60, 14)
+				ui.tLen = txt(st, "0:00", 10, false, MUT, 224, 124, 60, 14, RIGHT)
+				local dragging, dragR = false, 0
+				local function place(r)
+					fill.Size = UDim2.fromScale(r, 1)
+					knob.Position = UDim2.fromScale(r, 0.5)
 				end
-			end)
-			UIS.InputChanged:Connect(function(i)
-				if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then setV(i.Position.X) end
-			end)
-			UIS.InputEnded:Connect(function(i)
-				if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
-					dragging = false
-					if HOST.Scroll then HOST.Scroll.ScrollingEnabled = true end
-					saveData()
+				local function fromInput(x)
+					local r = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+					dragR = r
+					place(r)
+					ui.tCur.Text = fmt(r * snd.TimeLength)
 				end
-			end)
-		end
-
-		refreshNow = function()
-			local s = current()
-			ui.title.Text = s and s.name or "Nothing playing"
-			ui.sub.Text = s and (P.err and P.status == "error" and P.err or (s.tag or "YouTube")) or "Pick a song from your library"
-			ui.sub.TextColor3 = (P.status == "error") and WARN or MUT
-			local label = ({ idle = "", loading = P.progress and ("Downloading " .. P.progress .. "%") or "Loading…", playing = "Playing", paused = "Paused", error = "Problem" })[P.status] or ""
-			ui.statusLbl.Text = label
-			ui.statusLbl.TextColor3 = (P.status == "error") and WARN or (P.status == "playing" and GREEN or MUT)
-			ui.playGlyph.Visible = P.status ~= "playing"
-			ui.pauseA.Visible = P.status == "playing"
-			ui.pauseB.Visible = P.status == "playing"
-			ui.heart.TextColor3 = (s and isLiked(s)) and RED or MUT
-			ui.shuffleBtn.TextColor3 = D.shuffle and TXT or MUT
-			ui.shuffleBtn.BackgroundColor3 = D.shuffle and RED or BTN
-			ui.repeatBtn.Text = D.repeatMode == 2 and "Repeat 1" or "Repeat"
-			ui.repeatBtn.TextColor3 = D.repeatMode > 0 and TXT or MUT
-			ui.repeatBtn.BackgroundColor3 = D.repeatMode > 0 and RED or BTN
-		end
-	end
-
-	----------------------------------------------------------------- card: Queue
-	do
-		local st = cA.Card(nil, "MusicQueue")
-		txt(st, "Up next", 12, true, TXT, 16, 12, 150, 16)
-		button(st, "Clear", 228, 8, 56, 24, BTN, MUT, function()
-			local s = current()
-			P.queue = s and { s } or {}
-			P.idx = s and 1 or 0
-			P.history = {}
-			refreshQueue()
-		end, 10)
-		local list = new("ScrollingFrame", {
-			BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 40), Size = UDim2.new(1, -16, 1, -48),
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
-			ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
-		}, st)
-		new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-		local empty = txt(st, "Queue is empty.\nTap a song in the library.", 11, false, MUT, 16, 70, 268, 40, CENTER)
-		empty.TextWrapped = true
-		refreshQueue = function()
-			for _, c in ipairs(list:GetChildren()) do
-				if c:IsA("GuiObject") then c:Destroy() end
+				hit.InputBegan:Connect(function(i)
+					if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+						if snd.TimeLength <= 0 then return end
+						dragging = true
+						if HOST.Scroll then HOST.Scroll.ScrollingEnabled = false end
+						fromInput(i.Position.X)
+					end
+				end)
+				UIS.InputChanged:Connect(function(i)
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then fromInput(i.Position.X) end
+				end)
+				UIS.InputEnded:Connect(function(i)
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
+						dragging = false
+						if HOST.Scroll then HOST.Scroll.ScrollingEnabled = true end
+						pcall(function() snd.TimePosition = dragR * snd.TimeLength end)
+					end
+				end)
+				ui.prog.place = place
+				ui.prog.isDragging = function() return dragging end
 			end
-			empty.Visible = #P.queue == 0
-			for i, s in ipairs(P.queue) do
-				if i > 150 then break end
-				local isCur = i == P.idx
-				local row = new("TextButton", {
-					AutoButtonColor = false, Text = "", LayoutOrder = i, Size = UDim2.new(1, -4, 0, 30),
-					BackgroundColor3 = isCur and Color3.fromRGB(40, 22, 28) or FIELD, BackgroundTransparency = isCur and 0 or 0.4, BorderSizePixel = 0,
-				}, list)
-				rc(row, 10)
-				txt(row, tostring(i), 10, true, isCur and RED or MUT, 8, 0, 22, 30, CENTER)
-				local nm = txt(row, s.name, 11, isCur, isCur and TXT or Color3.fromRGB(210, 210, 218), 32, 0, 218, 30)
-				if isLiked(s) then nm.Size = UDim2.fromOffset(200, 30) txt(row, "♥", 11, true, RED, 236, 0, 20, 30, CENTER) end
-				row.Activated:Connect(function() playIndex(i) end)
+
+			-- controls: shuffle | prev | play/pause | next | repeat
+			ui.shuffleBtn = button(st, "Shuffle", 16, 154, 56, 24, BTN, MUT, function()
+				D.shuffle = not D.shuffle
+				saveData()
+				refreshNow()
+			end, 10)
+			local function iconButton(x, y, size, bg)
+				local b = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundColor3 = bg, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(size, size) }, st)
+				rc(b, size)
+				return b
 			end
-		end
-	end
+			local prev = iconButton(96, 150, 32, BTN)
+			txt(prev, "◀", 11, true, TXT, 7, 0, 16, 32, CENTER)
+			new("Frame", { BackgroundColor3 = TXT, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 10), Size = UDim2.fromOffset(2, 12) }, prev)
+			prev.Activated:Connect(stepPrev)
 
-	----------------------------------------------------------------- card: Library
-	do
-		local st = cB.Card(nil, "MusicLibrary")
-		txt(st, "Library", 14, true, TXT, 16, 12, 150, 18)
-		ui.dbStatus = txt(st, "", 10, false, MUT, 150, 14, 190, 14, RIGHT)
-		button(st, "↻", 354, 8, 30, 26, BTN, TXT, function() loadDatabase(true) end, 14)
-		local search, searchFrame = box(st, "Search songs, or paste a YouTube link…", 14, 42, 372, 32)
+			local play = iconButton(134, 144, 44, WHITE)
+			ui.playGlyph = txt(play, "▶", 17, true, INK, 2, 0, 44, 44, CENTER)
+			ui.pauseA = new("Frame", { BackgroundColor3 = INK, BorderSizePixel = 0, Position = UDim2.fromOffset(15, 14), Size = UDim2.fromOffset(5, 16), Visible = false }, play)
+			ui.pauseB = new("Frame", { BackgroundColor3 = INK, BorderSizePixel = 0, Position = UDim2.fromOffset(24, 14), Size = UDim2.fromOffset(5, 16), Visible = false }, play)
+			play.Activated:Connect(togglePlay)
 
-		-- category chips (built from the database)
-		local chips = new("ScrollingFrame", {
-			BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(14, 82), Size = UDim2.fromOffset(372, 28),
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
-			ScrollingDirection = Enum.ScrollingDirection.X,
-		}, st)
-		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center }, chips)
+			local nxt = iconButton(184, 150, 32, BTN)
+			txt(nxt, "▶", 11, true, TXT, 9, 0, 16, 32, CENTER)
+			new("Frame", { BackgroundColor3 = TXT, BorderSizePixel = 0, Position = UDim2.fromOffset(22, 10), Size = UDim2.fromOffset(2, 12) }, nxt)
+			nxt.Activated:Connect(function() stepNext(false) end)
 
-		local list = new("ScrollingFrame", {
-			BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 118), Size = UDim2.new(1, -16, 1, -126),
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
-			ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
-		}, st)
-		new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-		local note = txt(st, "", 11, false, MUT, 30, 170, 340, 60, CENTER)
-		note.TextWrapped = true
+			ui.repeatBtn = button(st, "Repeat", 228, 154, 56, 24, BTN, MUT, function()
+				D.repeatMode = (D.repeatMode + 1) % 3
+				saveData()
+				refreshNow()
+			end, 10)
 
-		local view, query, limit = "All", "", MUSIC.LIST_PAGE
-		local chipBtns = {}
-
-		local function allSongs()
-			local out, seen = {}, {}
-			for _, s in ipairs(D.saved) do
-				local song = mkSong(s.name, s.url, "Saved")
-				if song and not seen[song.id] then seen[song.id] = true out[#out + 1] = song end
-			end
-			for _, cname in ipairs(DB.order) do
-				for _, song in ipairs(DB.cats[cname]) do
-					if not seen[song.id] then seen[song.id] = true out[#out + 1] = song end
+			-- volume
+			txt(st, "Volume", 10, false, MUT, 16, 194, 50, 14)
+			do
+				local track = new("Frame", { Position = UDim2.fromOffset(66, 199), Size = UDim2.fromOffset(176, 4), BackgroundColor3 = Color3.fromRGB(48, 48, 56), BorderSizePixel = 0 }, st)
+				rc(track, 4)
+				local fill = new("Frame", { Size = UDim2.fromScale(D.volume, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
+				rc(fill, 4)
+				local knob = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(D.volume, 0.5), Size = UDim2.fromOffset(10, 10), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
+				rc(knob, 10)
+				local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.fromOffset(60, 190), Size = UDim2.fromOffset(188, 22) }, st)
+				local pct = txt(st, math.floor(D.volume * 100 + 0.5) .. "%", 10, false, MUT, 250, 194, 34, 14, RIGHT)
+				local dragging = false
+				local function setV(x)
+					local r = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+					D.volume = r
+					snd.Volume = r
+					fill.Size = UDim2.fromScale(r, 1)
+					knob.Position = UDim2.fromScale(r, 0.5)
+					pct.Text = math.floor(r * 100 + 0.5) .. "%"
 				end
-			end
-			for id, l in pairs(D.liked) do
-				if not seen[id] then
-					seen[id] = true
-					local song = mkSong(l.name, l.url, "Liked")
-					if song then out[#out + 1] = song end
-				end
-			end
-			return out
-		end
-
-		local function songsForView()
-			local base
-			if view == "All" then base = allSongs()
-			elseif view == "Liked" then
-				base = {}
-				for id, l in pairs(D.liked) do
-					local song = mkSong(l.name, l.url, "Liked")
-					if song then base[#base + 1] = song end
-				end
-				table.sort(base, function(a, b) return a.name:lower() < b.name:lower() end)
-			elseif view == "Saved" then
-				base = {}
-				for _, s in ipairs(D.saved) do
-					local song = mkSong(s.name, s.url, "Saved")
-					if song then base[#base + 1] = song end
-				end
-			elseif view == "YouTube" then base = YT.results
-			else base = DB.cats[view] or {} end
-			-- search filter (song name)
-			local q = query:lower():gsub("^%s+", ""):gsub("%s+$", "")
-			if q ~= "" and view ~= "YouTube" then
-				local f = {}
-				for _, s in ipairs(base) do
-					if s.name:lower():find(q, 1, true) then f[#f + 1] = s end
-				end
-				base = f
-			end
-			-- liked songs always float to the top
-			local liked, rest = {}, {}
-			for _, s in ipairs(base) do
-				if isLiked(s) then liked[#liked + 1] = s else rest[#rest + 1] = s end
-			end
-			for _, s in ipairs(rest) do liked[#liked + 1] = s end
-			return liked
-		end
-
-		local function setView(v)
-			view, limit = v, MUSIC.LIST_PAGE
-			for name, b in pairs(chipBtns) do
-				local on = name == v
-				b.BackgroundColor3 = on and WHITE or BTN
-				b.TextColor3 = on and INK or MUT
-			end
-			refreshLibrary()
-		end
-
-		local function buildChips()
-			for _, c in ipairs(chips:GetChildren()) do
-				if c:IsA("TextButton") then c:Destroy() end
-			end
-			chipBtns = {}
-			local names = { "All", "Liked", "Saved" }
-			for _, c in ipairs(DB.order) do names[#names + 1] = c end
-			names[#names + 1] = "YouTube"
-			for i, name in ipairs(names) do
-				local w = math.max(48, #name * 7 + 22)
-				local b = button(chips, name, 0, 0, w, 24, BTN, MUT, function() setView(name) end, 11)
-				b.LayoutOrder = i
-				b.Size = UDim2.fromOffset(w, 24)
-				chipBtns[name] = b
-			end
-			for name, b in pairs(chipBtns) do
-				local on = name == view
-				b.BackgroundColor3 = on and WHITE or BTN
-				b.TextColor3 = on and INK or MUT
-			end
-		end
-
-		local function makeRow(song, order, songs, index)
-			local row = new("Frame", { LayoutOrder = order, Size = UDim2.new(1, -4, 0, 38), BackgroundColor3 = FIELD, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, list)
-			rc(row, 10)
-			local playing = current() and current().id == song.id
-			local main = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, -126, 1, 0) }, row)
-			txt(main, playing and "▶" or "♪", 11, true, playing and RED or MUT, 6, 0, 22, 38, CENTER)
-			txt(main, song.name, 12, playing, playing and TXT or Color3.fromRGB(225, 225, 232), 30, 4, 220, 16)
-			txt(main, song.tag or "YouTube", 10, false, MUT, 30, 21, 220, 12)
-			main.Activated:Connect(function() playList(songs, index) end)
-			local liked = isLiked(song)
-			button(row, "♥", 262, 5, 28, 28, liked and Color3.fromRGB(46, 22, 30) or BTN, liked and RED or MUT, function() setLiked(song, not isLiked(song)) end, 14)
-			button(row, "+", 294, 5, 28, 28, BTN, TXT, function() addToQueue(song) end, 15)
-			if view == "Saved" or song.tag == "Saved" then
-				button(row, "×", 326, 5, 28, 28, BTN, WARN, function() removeSaved(song.id) refreshLibrary(true) end, 15)
-			elseif not isSaved(song.id) then
-				button(row, "Save", 326, 5, 38, 28, BTN, MUT, function()
-					saveSong(song.name, song.url)
-					refreshLibrary(true)
-				end, 10)
-			end
-		end
-
-		local pending = 0
-		refreshLibrary = function(keepScroll)
-			local y = list.CanvasPosition.Y
-			for _, c in ipairs(list:GetChildren()) do
-				if c:IsA("GuiObject") then c:Destroy() end
-			end
-			note.Visible = false
-			-- database status line
-			if DB.loading and not DB.ready then ui.dbStatus.Text = "Loading songs…"
-			elseif DB.err then ui.dbStatus.Text = "Database offline"
-			else
-				local n = 0
-				for _, arr in pairs(DB.cats) do n += #arr end
-				ui.dbStatus.Text = DB.ready and (n .. " songs · " .. #DB.order .. " categories") or ""
-			end
-			local order = 0
-			-- paste a YouTube link = play it
-			if looksLikeLink(query) then
-				local id = videoId(query)
-				order += 1
-				local row = new("TextButton", { AutoButtonColor = false, Text = "", LayoutOrder = order, Size = UDim2.new(1, -4, 0, 38), BackgroundColor3 = Color3.fromRGB(40, 22, 28), BorderSizePixel = 0 }, list)
-				rc(row, 10)
-				txt(row, "▶  Play this link", 12, true, TXT, 12, 0, 250, 38)
-				local linkSong = mkSong("YouTube " .. id, query, "Pasted link")
-				row.Activated:Connect(function() if linkSong then playOne(linkSong) end end)
-				button(row, "+", 326, 5, 28, 28, BTN, TXT, function() if linkSong then addToQueue(linkSong) end end, 15)
-			elseif query:gsub("%s", "") ~= "" and view ~= "YouTube" then
-				order += 1
-				local row = new("TextButton", { AutoButtonColor = false, Text = "", LayoutOrder = order, Size = UDim2.new(1, -4, 0, 34), BackgroundColor3 = BTN, BorderSizePixel = 0 }, list)
-				rc(row, 10)
-				local hasKey = D.apiKey ~= ""
-				txt(row, hasKey and ("Search YouTube for “" .. clip(query, 30) .. "”") or "Add an API key to search all of YouTube →", 11, true, hasKey and TXT or MUT, 12, 0, 340, 34)
-				row.Activated:Connect(function()
-					if hasKey then
-						view = "YouTube"
-						setView("YouTube")
-						ytSearch(query, function() refreshLibrary() end)
-					elseif ui.keyCard then
-						HOST.ScrollTo(ui.keyCard.Position.X.Offset - 20)
+				hit.InputBegan:Connect(function(i)
+					if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+						dragging = true
+						if HOST.Scroll then HOST.Scroll.ScrollingEnabled = false end
+						setV(i.Position.X)
+					end
+				end)
+				UIS.InputChanged:Connect(function(i)
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then setV(i.Position.X) end
+				end)
+				UIS.InputEnded:Connect(function(i)
+					if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
+						dragging = false
+						if HOST.Scroll then HOST.Scroll.ScrollingEnabled = true end
+						saveData()
 					end
 				end)
 			end
 
-			if view == "YouTube" then
-				if D.apiKey == "" then
-					note.Text = "YouTube search needs your own free API key.\nSet it up in the YouTube search card →"
-					note.Visible = true
-				elseif YT.busy then
-					note.Text = "Searching YouTube…"
-					note.Visible = true
-				elseif YT.msg then
-					note.Text = YT.msg
-					note.Visible = true
-				elseif #YT.results == 0 then
-					note.Text = "Type a song name above and press Enter\nto search YouTube."
-					note.Visible = true
+			refreshNow = function()
+				local s = current()
+				ui.title.Text = s and s.name or "Nothing playing"
+				ui.sub.Text = s and (P.err and P.status == "error" and P.err or (s.tag or "YouTube")) or "Pick a song from your library"
+				ui.sub.TextColor3 = (P.status == "error") and WARN or MUT
+				local label = ({ idle = "", loading = P.progress and ("Downloading " .. P.progress .. "%") or "Loading…", playing = "Playing", paused = "Paused", error = "Problem" })[P.status] or ""
+				ui.statusLbl.Text = label
+				ui.statusLbl.TextColor3 = (P.status == "error") and WARN or (P.status == "playing" and GREEN or MUT)
+				ui.playGlyph.Visible = P.status ~= "playing"
+				ui.pauseA.Visible = P.status == "playing"
+				ui.pauseB.Visible = P.status == "playing"
+				ui.heart.TextColor3 = (s and isLiked(s)) and RED or MUT
+				ui.shuffleBtn.TextColor3 = D.shuffle and TXT or MUT
+				ui.shuffleBtn.BackgroundColor3 = D.shuffle and RED or BTN
+				ui.repeatBtn.Text = D.repeatMode == 2 and "Repeat 1" or "Repeat"
+				ui.repeatBtn.TextColor3 = D.repeatMode > 0 and TXT or MUT
+				ui.repeatBtn.BackgroundColor3 = D.repeatMode > 0 and RED or BTN
+			end
+		end
+
+		----------------------------------------------------------------- card: Queue
+		do
+			local st = cA.Card(nil, "MusicQueue")
+			txt(st, "Up next", 12, true, TXT, 16, 12, 150, 16)
+			button(st, "Clear", 228, 8, 56, 24, BTN, MUT, function()
+				local s = current()
+				P.queue = s and { s } or {}
+				P.idx = s and 1 or 0
+				P.history = {}
+				refreshQueue()
+			end, 10)
+			local list = new("ScrollingFrame", {
+				BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 40), Size = UDim2.new(1, -16, 1, -48),
+				CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+				ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
+			}, st)
+			new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+			local empty = txt(st, "Queue is empty.\nTap a song in the library.", 11, false, MUT, 16, 70, 268, 40, CENTER)
+			empty.TextWrapped = true
+			refreshQueue = function()
+				for _, c in ipairs(list:GetChildren()) do
+					if c:IsA("GuiObject") then c:Destroy() end
+				end
+				empty.Visible = #P.queue == 0
+				for i, s in ipairs(P.queue) do
+					if i > 150 then break end
+					local isCur = i == P.idx
+					local row = new("TextButton", {
+						AutoButtonColor = false, Text = "", LayoutOrder = i, Size = UDim2.new(1, -4, 0, 30),
+						BackgroundColor3 = isCur and Color3.fromRGB(40, 22, 28) or FIELD, BackgroundTransparency = isCur and 0 or 0.4, BorderSizePixel = 0,
+					}, list)
+					rc(row, 10)
+					txt(row, tostring(i), 10, true, isCur and RED or MUT, 8, 0, 22, 30, CENTER)
+					local nm = txt(row, s.name, 11, isCur, isCur and TXT or Color3.fromRGB(210, 210, 218), 32, 0, 218, 30)
+					if isLiked(s) then nm.Size = UDim2.fromOffset(200, 30) txt(row, "♥", 11, true, RED, 236, 0, 20, 30, CENTER) end
+					row.Activated:Connect(function() playIndex(i) end)
 				end
 			end
+		end
 
-			local songs = songsForView()
-			if #songs == 0 and not note.Visible then
-				if not DB.ready and DB.loading then note.Text = "Loading the song database…"
-				elseif not DB.ready and DB.err then note.Text = DB.err
-				elseif view == "Liked" then note.Text = "No liked songs yet.\nTap ♥ on any song."
-				elseif view == "Saved" then note.Text = "No saved songs yet.\nUse the “Save a song” card →"
-				elseif query ~= "" then note.Text = "No songs match “" .. clip(query, 30) .. "”."
-				else note.Text = "Nothing here yet." end
-				note.Visible = true
-			end
-			for i, song in ipairs(songs) do
-				if i > limit then
-					order += 1
-					local more = new("TextButton", { AutoButtonColor = false, Text = "Show more (" .. (#songs - limit) .. " left)", TextSize = 11, TextColor3 = MUT, LayoutOrder = order, Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = BTN, BorderSizePixel = 0 }, list)
-					styleText(more, true)
-					rc(more, 10)
-					more.Activated:Connect(function() limit += MUSIC.LIST_PAGE refreshLibrary(true) end)
-					break
+		----------------------------------------------------------------- card: Library
+		do
+			local st = cB.Card(nil, "MusicLibrary")
+			txt(st, "Library", 14, true, TXT, 16, 12, 150, 18)
+			ui.dbStatus = txt(st, "", 10, false, MUT, 150, 14, 190, 14, RIGHT)
+			button(st, "↻", 354, 8, 30, 26, BTN, TXT, function() loadDatabase(true) end, 14)
+			local search, searchFrame = box(st, "Search songs, or paste a YouTube link…", 14, 42, 372, 32)
+
+			-- category chips (built from the database)
+			local chips = new("ScrollingFrame", {
+				BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(14, 82), Size = UDim2.fromOffset(372, 28),
+				CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+				ScrollingDirection = Enum.ScrollingDirection.X,
+			}, st)
+			new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center }, chips)
+
+			local list = new("ScrollingFrame", {
+				BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 118), Size = UDim2.new(1, -16, 1, -126),
+				CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+				ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
+			}, st)
+			new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+			local note = txt(st, "", 11, false, MUT, 30, 170, 340, 60, CENTER)
+			note.TextWrapped = true
+
+			local view, query, limit = "All", "", MUSIC.LIST_PAGE
+			local chipBtns = {}
+
+			local function allSongs()
+				local out, seen = {}, {}
+				for _, s in ipairs(D.saved) do
+					local song = mkSong(s.name, s.url, "Saved")
+					if song and not seen[song.id] then seen[song.id] = true out[#out + 1] = song end
 				end
-				order += 1
-				makeRow(song, order, songs, i)
-			end
-			if keepScroll == true then
-				task.defer(function() list.CanvasPosition = Vector2.new(0, y) end)
-			end
-		end
-
-		onDatabase = function() buildChips() refreshLibrary() end
-		ui.onYT = function() if view == "YouTube" then refreshLibrary() end end
-
-		search:GetPropertyChangedSignal("Text"):Connect(function()
-			query = search.Text
-			pending += 1
-			local my = pending
-			task.delay(0.25, function()
-				if my == pending then limit = MUSIC.LIST_PAGE refreshLibrary() end
-			end)
-		end)
-		search.FocusLost:Connect(function(enter)
-			if enter and view == "YouTube" and query:gsub("%s", "") ~= "" and not looksLikeLink(query) then
-				ytSearch(query, function() refreshLibrary() end)
-			end
-		end)
-
-		buildChips()
-		setView("All")
-	end
-
-	----------------------------------------------------------------- card: Save a song
-	do
-		local st = cC.Card(178, "MusicSave")
-		txt(st, "Save a song", 14, true, TXT, 16, 12, 200, 18)
-		txt(st, "Keep your own songs with a name and a YouTube link.", 10, false, MUT, 16, 32, 260, 14)
-		local nameBox = box(st, "Song name", 14, 54, 262, 32)
-		local linkBox = box(st, "YouTube link", 14, 92, 262, 32)
-		local msg = txt(st, "", 10, false, MUT, 16, 158, 260, 14)
-		local function doSave()
-			local ok, m = saveSong(nameBox.Text, linkBox.Text)
-			msg.Text = m
-			msg.TextColor3 = ok and GREEN or WARN
-			if ok then
-				nameBox.Text, linkBox.Text = "", ""
-				if refreshLibrary then refreshLibrary(true) end
-			end
-		end
-		button(st, "Save song", 14, 128, 128, 28, WHITE, INK, doSave, 12)
-		button(st, "Play link", 148, 128, 128, 28, BTN, TXT, function()
-			local s = mkSong(nameBox.Text ~= "" and nameBox.Text or ("YouTube " .. tostring(videoId(linkBox.Text))), linkBox.Text, "Pasted link")
-			if s then playOne(s) msg.Text = "" else msg.Text = "That doesn't look like a YouTube link." msg.TextColor3 = WARN end
-		end, 12)
-	end
-
-	----------------------------------------------------------------- card: Playback (audio server, cache, executor check)
-	do
-		local st = cC.Card(nil, "MusicPlayback")
-		txt(st, "Playback", 14, true, TXT, 16, 10, 120, 18)
-		local feat = txt(st, "", 10, true, CAN_AUDIO and GREEN or WARN, 100, 12, 176, 14, RIGHT)
-		feat.Text = CAN_AUDIO and "Executor supported" or "Executor can't play songs"
-		local srv = box(st, "Backup audio server URL (optional)", 14, 36, 262, 28)
-		srv.Text = D.server
-		local srvKey = box(st, "Server key (only if it needs one)", 14, 68, 262, 28)
-		srvKey.Text = D.serverKey
-		local m = txt(st, "Songs download through the TAT audio service. Optional: paste a backup audio server above.", 10, false, MUT, 16, 148, 262, 24)
-		m.TextWrapped = true
-		m.TextYAlignment = Enum.TextYAlignment.Top
-		local function commit()
-			D.server = srv.Text:gsub("^%s+", ""):gsub("%s+$", "")
-			D.serverKey = srvKey.Text:gsub("^%s+", ""):gsub("%s+$", "")
-			saveData()
-		end
-		srv.FocusLost:Connect(commit)
-		srvKey.FocusLost:Connect(commit)
-		button(st, "Clear downloaded songs", 14, 108, 262, 28, BTN, TXT, function()
-			local done = false
-			pcall(function()
-				if listfiles and delfile then
-					for _, f in ipairs(listfiles(CACHE)) do pcall(delfile, f) end
-					done = true
-				end
-			end)
-			m.Text = done and "Downloaded songs cleared." or "Your executor can't delete files."
-		end, 11)
-	end
-
-	----------------------------------------------------------------- card: YouTube search key + instructions
-	do
-		local st, keyCardInfo = cD.Card(nil, "MusicSearchKey")
-		ui.keyCard = keyCardInfo.frame
-		txt(st, "YouTube search", 14, true, TXT, 16, 12, 200, 18)
-		local state = txt(st, "", 10, true, MUT, 150, 14, 144, 14, RIGHT)
-		local keyBox = box(st, "Paste your API key (AIza…)", 14, 38, 282, 32)
-		local function mask(k)
-			if k == "" then return "" end
-			if #k <= 10 then return string.rep("•", #k) end
-			return k:sub(1, 4) .. string.rep("•", 12) .. k:sub(-4)
-		end
-		local function paint()
-			state.Text = D.apiKey ~= "" and "Key saved" or "No key yet"
-			state.TextColor3 = D.apiKey ~= "" and GREEN or MUT
-			keyBox.Text = mask(D.apiKey)
-		end
-		keyBox.Focused:Connect(function() keyBox.Text = D.apiKey end)
-		keyBox.FocusLost:Connect(function()
-			local v = keyBox.Text:gsub("%s", "")
-			if v ~= "" and not v:find("•", 1, true) then D.apiKey = v saveData() end
-			paint()
-			if refreshLibrary then refreshLibrary(true) end
-		end)
-		local msg = txt(st, "", 10, false, MUT, 16, 112, 280, 14)
-		button(st, "Test key", 14, 76, 90, 26, WHITE, INK, function()
-			if D.apiKey == "" then msg.Text = "Paste a key first." msg.TextColor3 = WARN return end
-			msg.Text, msg.TextColor3 = "Testing…", MUT
-			task.spawn(function()
-				local ok, res = pcall(REQ, { Url = "https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=test&key=" .. HttpService:UrlEncode(D.apiKey), Method = "GET" })
-				local good, text = false, "Couldn't reach YouTube."
-				if ok and res and res.Body then
-					local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
-					if ok2 and type(data) == "table" then
-						if data.error then text = clip(tostring(data.error.message or "error"), 90)
-						else good, text = true, "Key works. You can search now." end
+				for _, cname in ipairs(DB.order) do
+					for _, song in ipairs(DB.cats[cname]) do
+						if not seen[song.id] then seen[song.id] = true out[#out + 1] = song end
 					end
 				end
-				msg.Text, msg.TextColor3 = text, good and GREEN or WARN
-			end)
-		end, 11)
-		button(st, "Remove key", 110, 76, 90, 26, BTN, WARN, function()
-			D.apiKey = ""
-			saveData()
-			paint()
-			msg.Text = "Key removed."
-			msg.TextColor3 = MUT
-			if refreshLibrary then refreshLibrary(true) end
-		end, 11)
+				for id, l in pairs(D.liked) do
+					if not seen[id] then
+						seen[id] = true
+						local song = mkSong(l.name, l.url, "Liked")
+						if song then out[#out + 1] = song end
+					end
+				end
+				return out
+			end
 
-		txt(st, "How to get your free key", 12, true, TXT, 16, 134, 280, 16)
-		local steps = new("ScrollingFrame", {
-			BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 156), Size = UDim2.new(1, -16, 1, -164),
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
-			ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
-		}, st)
-		local help = new("TextLabel", {
-			BackgroundTransparency = 1, Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -16, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-			TextWrapped = true, TextXAlignment = LEFT, TextYAlignment = Enum.TextYAlignment.Top, TextSize = 11, TextColor3 = MUT, RichText = true,
-			Text = table.concat({
-				"<b>1.</b> Open <b>console.cloud.google.com</b> and sign in with a Google account.",
-				"<b>2.</b> Top bar → project picker → <b>New project</b>. Any name works.",
-				"<b>3.</b> Menu → <b>APIs &amp; Services</b> → <b>Library</b>. Search <b>YouTube Data API v3</b> and press <b>Enable</b>.",
-				"<b>4.</b> Menu → <b>APIs &amp; Services</b> → <b>Credentials</b> → <b>Create credentials</b> → <b>API key</b>.",
-				"<b>5.</b> Copy the key (it starts with AIza) and paste it in the box above. Press <b>Test key</b>.",
-				"",
-				"<b>Using it:</b> in the Library open the <b>YouTube</b> tab, type a song, press Enter. Or type in any tab and tap “Search YouTube”.",
-				"",
-				"<b>Good to know:</b> the free quota is about 100 searches a day. Your key stays only on this device and is never shared. Without a key you can still play the database, your saved songs and any pasted YouTube link.",
-			}, "\n"),
-		}, steps)
-		styleText(help, false)
-		paint()
+			local function songsForView()
+				local base
+				if view == "All" then base = allSongs()
+				elseif view == "Liked" then
+					base = {}
+					for id, l in pairs(D.liked) do
+						local song = mkSong(l.name, l.url, "Liked")
+						if song then base[#base + 1] = song end
+					end
+					table.sort(base, function(a, b) return a.name:lower() < b.name:lower() end)
+				elseif view == "Saved" then
+					base = {}
+					for _, s in ipairs(D.saved) do
+						local song = mkSong(s.name, s.url, "Saved")
+						if song then base[#base + 1] = song end
+					end
+				elseif view == "YouTube" then base = YT.results
+				else base = DB.cats[view] or {} end
+				-- search filter (song name)
+				local q = query:lower():gsub("^%s+", ""):gsub("%s+$", "")
+				if q ~= "" and view ~= "YouTube" then
+					local f = {}
+					for _, s in ipairs(base) do
+						if s.name:lower():find(q, 1, true) then f[#f + 1] = s end
+					end
+					base = f
+				end
+				-- liked songs always float to the top
+				local liked, rest = {}, {}
+				for _, s in ipairs(base) do
+					if isLiked(s) then liked[#liked + 1] = s else rest[#rest + 1] = s end
+				end
+				for _, s in ipairs(rest) do liked[#liked + 1] = s end
+				return liked
+			end
+
+			local function setView(v)
+				view, limit = v, MUSIC.LIST_PAGE
+				for name, b in pairs(chipBtns) do
+					local on = name == v
+					b.BackgroundColor3 = on and WHITE or BTN
+					b.TextColor3 = on and INK or MUT
+				end
+				refreshLibrary()
+			end
+
+			local function buildChips()
+				for _, c in ipairs(chips:GetChildren()) do
+					if c:IsA("TextButton") then c:Destroy() end
+				end
+				chipBtns = {}
+				local names = { "All", "Liked", "Saved" }
+				for _, c in ipairs(DB.order) do names[#names + 1] = c end
+				names[#names + 1] = "YouTube"
+				for i, name in ipairs(names) do
+					local w = math.max(48, #name * 7 + 22)
+					local b = button(chips, name, 0, 0, w, 24, BTN, MUT, function() setView(name) end, 11)
+					b.LayoutOrder = i
+					b.Size = UDim2.fromOffset(w, 24)
+					chipBtns[name] = b
+				end
+				for name, b in pairs(chipBtns) do
+					local on = name == view
+					b.BackgroundColor3 = on and WHITE or BTN
+					b.TextColor3 = on and INK or MUT
+				end
+			end
+
+			local function makeRow(song, order, songs, index)
+				local row = new("Frame", { LayoutOrder = order, Size = UDim2.new(1, -4, 0, 38), BackgroundColor3 = FIELD, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, list)
+				rc(row, 10)
+				local playing = current() and current().id == song.id
+				local main = new("TextButton", { AutoButtonColor = false, Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, -126, 1, 0) }, row)
+				txt(main, playing and "▶" or "♪", 11, true, playing and RED or MUT, 6, 0, 22, 38, CENTER)
+				txt(main, song.name, 12, playing, playing and TXT or Color3.fromRGB(225, 225, 232), 30, 4, 220, 16)
+				txt(main, song.tag or "YouTube", 10, false, MUT, 30, 21, 220, 12)
+				main.Activated:Connect(function() playList(songs, index) end)
+				local liked = isLiked(song)
+				button(row, "♥", 262, 5, 28, 28, liked and Color3.fromRGB(46, 22, 30) or BTN, liked and RED or MUT, function() setLiked(song, not isLiked(song)) end, 14)
+				button(row, "+", 294, 5, 28, 28, BTN, TXT, function() addToQueue(song) end, 15)
+				if view == "Saved" or song.tag == "Saved" then
+					button(row, "×", 326, 5, 28, 28, BTN, WARN, function() removeSaved(song.id) refreshLibrary(true) end, 15)
+				elseif not isSaved(song.id) then
+					button(row, "Save", 326, 5, 38, 28, BTN, MUT, function()
+						saveSong(song.name, song.url)
+						refreshLibrary(true)
+					end, 10)
+				end
+			end
+
+			local pending = 0
+			refreshLibrary = function(keepScroll)
+				local y = list.CanvasPosition.Y
+				for _, c in ipairs(list:GetChildren()) do
+					if c:IsA("GuiObject") then c:Destroy() end
+				end
+				note.Visible = false
+				-- database status line
+				if DB.loading and not DB.ready then ui.dbStatus.Text = "Loading songs…"
+				elseif DB.err then ui.dbStatus.Text = "Database offline"
+				else
+					local n = 0
+					for _, arr in pairs(DB.cats) do n += #arr end
+					ui.dbStatus.Text = DB.ready and (n .. " songs · " .. #DB.order .. " categories") or ""
+				end
+				local order = 0
+				-- paste a YouTube link = play it
+				if looksLikeLink(query) then
+					local id = videoId(query)
+					order += 1
+					local row = new("TextButton", { AutoButtonColor = false, Text = "", LayoutOrder = order, Size = UDim2.new(1, -4, 0, 38), BackgroundColor3 = Color3.fromRGB(40, 22, 28), BorderSizePixel = 0 }, list)
+					rc(row, 10)
+					txt(row, "▶  Play this link", 12, true, TXT, 12, 0, 250, 38)
+					local linkSong = mkSong("YouTube " .. id, query, "Pasted link")
+					row.Activated:Connect(function() if linkSong then playOne(linkSong) end end)
+					button(row, "+", 326, 5, 28, 28, BTN, TXT, function() if linkSong then addToQueue(linkSong) end end, 15)
+				elseif query:gsub("%s", "") ~= "" and view ~= "YouTube" then
+					order += 1
+					local row = new("TextButton", { AutoButtonColor = false, Text = "", LayoutOrder = order, Size = UDim2.new(1, -4, 0, 34), BackgroundColor3 = BTN, BorderSizePixel = 0 }, list)
+					rc(row, 10)
+					local hasKey = D.apiKey ~= ""
+					txt(row, hasKey and ("Search YouTube for “" .. clip(query, 30) .. "”") or "Add an API key to search all of YouTube →", 11, true, hasKey and TXT or MUT, 12, 0, 340, 34)
+					row.Activated:Connect(function()
+						if hasKey then
+							view = "YouTube"
+							setView("YouTube")
+							ytSearch(query, function() refreshLibrary() end)
+						elseif ui.keyCard then
+							HOST.ScrollTo(ui.keyCard.Position.X.Offset - 20)
+						end
+					end)
+				end
+
+				if view == "YouTube" then
+					if D.apiKey == "" then
+						note.Text = "YouTube search needs your own free API key.\nSet it up in the YouTube search card →"
+						note.Visible = true
+					elseif YT.busy then
+						note.Text = "Searching YouTube…"
+						note.Visible = true
+					elseif YT.msg then
+						note.Text = YT.msg
+						note.Visible = true
+					elseif #YT.results == 0 then
+						note.Text = "Type a song name above and press Enter\nto search YouTube."
+						note.Visible = true
+					end
+				end
+
+				local songs = songsForView()
+				if #songs == 0 and not note.Visible then
+					if not DB.ready and DB.loading then note.Text = "Loading the song database…"
+					elseif not DB.ready and DB.err then note.Text = DB.err
+					elseif view == "Liked" then note.Text = "No liked songs yet.\nTap ♥ on any song."
+					elseif view == "Saved" then note.Text = "No saved songs yet.\nUse the “Save a song” card →"
+					elseif query ~= "" then note.Text = "No songs match “" .. clip(query, 30) .. "”."
+					else note.Text = "Nothing here yet." end
+					note.Visible = true
+				end
+				for i, song in ipairs(songs) do
+					if i > limit then
+						order += 1
+						local more = new("TextButton", { AutoButtonColor = false, Text = "Show more (" .. (#songs - limit) .. " left)", TextSize = 11, TextColor3 = MUT, LayoutOrder = order, Size = UDim2.new(1, -4, 0, 30), BackgroundColor3 = BTN, BorderSizePixel = 0 }, list)
+						styleText(more, true)
+						rc(more, 10)
+						more.Activated:Connect(function() limit += MUSIC.LIST_PAGE refreshLibrary(true) end)
+						break
+					end
+					order += 1
+					makeRow(song, order, songs, i)
+				end
+				if keepScroll == true then
+					task.defer(function() list.CanvasPosition = Vector2.new(0, y) end)
+				end
+			end
+
+			onDatabase = function() buildChips() refreshLibrary() end
+			ui.onYT = function() if view == "YouTube" then refreshLibrary() end end
+
+			search:GetPropertyChangedSignal("Text"):Connect(function()
+				query = search.Text
+				pending += 1
+				local my = pending
+				task.delay(0.25, function()
+					if my == pending then limit = MUSIC.LIST_PAGE refreshLibrary() end
+				end)
+			end)
+			search.FocusLost:Connect(function(enter)
+				if enter and view == "YouTube" and query:gsub("%s", "") ~= "" and not looksLikeLink(query) then
+					ytSearch(query, function() refreshLibrary() end)
+				end
+			end)
+
+			buildChips()
+			setView("All")
+		end
+
+		----------------------------------------------------------------- card: Save a song
+		do
+			local st = cC.Card(178, "MusicSave")
+			txt(st, "Save a song", 14, true, TXT, 16, 12, 200, 18)
+			txt(st, "Keep your own songs with a name and a YouTube link.", 10, false, MUT, 16, 32, 260, 14)
+			local nameBox = box(st, "Song name", 14, 54, 262, 32)
+			local linkBox = box(st, "YouTube link", 14, 92, 262, 32)
+			local msg = txt(st, "", 10, false, MUT, 16, 158, 260, 14)
+			local function doSave()
+				local ok, m = saveSong(nameBox.Text, linkBox.Text)
+				msg.Text = m
+				msg.TextColor3 = ok and GREEN or WARN
+				if ok then
+					nameBox.Text, linkBox.Text = "", ""
+					if refreshLibrary then refreshLibrary(true) end
+				end
+			end
+			button(st, "Save song", 14, 128, 128, 28, WHITE, INK, doSave, 12)
+			button(st, "Play link", 148, 128, 128, 28, BTN, TXT, function()
+				local s = mkSong(nameBox.Text ~= "" and nameBox.Text or ("YouTube " .. tostring(videoId(linkBox.Text))), linkBox.Text, "Pasted link")
+				if s then playOne(s) msg.Text = "" else msg.Text = "That doesn't look like a YouTube link." msg.TextColor3 = WARN end
+			end, 12)
+		end
+
+		----------------------------------------------------------------- card: Playback (audio server, cache, executor check)
+		do
+			local st = cC.Card(nil, "MusicPlayback")
+			txt(st, "Playback", 14, true, TXT, 16, 10, 120, 18)
+			local feat = txt(st, "", 10, true, CAN_AUDIO and GREEN or WARN, 100, 12, 176, 14, RIGHT)
+			feat.Text = CAN_AUDIO and "Executor supported" or "Executor can't play songs"
+			local srv = box(st, "Backup audio server URL (optional)", 14, 36, 262, 28)
+			srv.Text = D.server
+			local srvKey = box(st, "Server key (only if it needs one)", 14, 68, 262, 28)
+			srvKey.Text = D.serverKey
+			local m = txt(st, "Songs download through the TAT audio service. Optional: paste a backup audio server above.", 10, false, MUT, 16, 148, 262, 24)
+			m.TextWrapped = true
+			m.TextYAlignment = Enum.TextYAlignment.Top
+			local function commit()
+				D.server = srv.Text:gsub("^%s+", ""):gsub("%s+$", "")
+				D.serverKey = srvKey.Text:gsub("^%s+", ""):gsub("%s+$", "")
+				saveData()
+			end
+			srv.FocusLost:Connect(commit)
+			srvKey.FocusLost:Connect(commit)
+			button(st, "Clear downloaded songs", 14, 108, 262, 28, BTN, TXT, function()
+				local done = false
+				pcall(function()
+					if listfiles and delfile then
+						for _, f in ipairs(listfiles(CACHE)) do pcall(delfile, f) end
+						done = true
+					end
+				end)
+				m.Text = done and "Downloaded songs cleared." or "Your executor can't delete files."
+			end, 11)
+		end
+
+		----------------------------------------------------------------- card: YouTube search key + instructions
+		do
+			local st, keyCardInfo = cD.Card(nil, "MusicSearchKey")
+			ui.keyCard = keyCardInfo.frame
+			txt(st, "YouTube search", 14, true, TXT, 16, 12, 200, 18)
+			local state = txt(st, "", 10, true, MUT, 150, 14, 144, 14, RIGHT)
+			local keyBox = box(st, "Paste your API key (AIza…)", 14, 38, 282, 32)
+			local function mask(k)
+				if k == "" then return "" end
+				if #k <= 10 then return string.rep("•", #k) end
+				return k:sub(1, 4) .. string.rep("•", 12) .. k:sub(-4)
+			end
+			local function paint()
+				state.Text = D.apiKey ~= "" and "Key saved" or "No key yet"
+				state.TextColor3 = D.apiKey ~= "" and GREEN or MUT
+				keyBox.Text = mask(D.apiKey)
+			end
+			keyBox.Focused:Connect(function() keyBox.Text = D.apiKey end)
+			keyBox.FocusLost:Connect(function()
+				local v = keyBox.Text:gsub("%s", "")
+				if v ~= "" and not v:find("•", 1, true) then D.apiKey = v saveData() end
+				paint()
+				if refreshLibrary then refreshLibrary(true) end
+			end)
+			local msg = txt(st, "", 10, false, MUT, 16, 112, 280, 14)
+			button(st, "Test key", 14, 76, 90, 26, WHITE, INK, function()
+				if D.apiKey == "" then msg.Text = "Paste a key first." msg.TextColor3 = WARN return end
+				msg.Text, msg.TextColor3 = "Testing…", MUT
+				task.spawn(function()
+					local ok, res = pcall(REQ, { Url = "https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=test&key=" .. HttpService:UrlEncode(D.apiKey), Method = "GET" })
+					local good, text = false, "Couldn't reach YouTube."
+					if ok and res and res.Body then
+						local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+						if ok2 and type(data) == "table" then
+							if data.error then text = clip(tostring(data.error.message or "error"), 90)
+							else good, text = true, "Key works. You can search now." end
+						end
+					end
+					msg.Text, msg.TextColor3 = text, good and GREEN or WARN
+				end)
+			end, 11)
+			button(st, "Remove key", 110, 76, 90, 26, BTN, WARN, function()
+				D.apiKey = ""
+				saveData()
+				paint()
+				msg.Text = "Key removed."
+				msg.TextColor3 = MUT
+				if refreshLibrary then refreshLibrary(true) end
+			end, 11)
+
+			txt(st, "How to get your free key", 12, true, TXT, 16, 134, 280, 16)
+			local steps = new("ScrollingFrame", {
+				BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 156), Size = UDim2.new(1, -16, 1, -164),
+				CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+				ScrollBarImageTransparency = 0.7, ScrollingDirection = Enum.ScrollingDirection.Y,
+			}, st)
+			local help = new("TextLabel", {
+				BackgroundTransparency = 1, Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -16, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+				TextWrapped = true, TextXAlignment = LEFT, TextYAlignment = Enum.TextYAlignment.Top, TextSize = 11, TextColor3 = MUT, RichText = true,
+				Text = table.concat({
+					"<b>1.</b> Open <b>console.cloud.google.com</b> and sign in with a Google account.",
+					"<b>2.</b> Top bar → project picker → <b>New project</b>. Any name works.",
+					"<b>3.</b> Menu → <b>APIs &amp; Services</b> → <b>Library</b>. Search <b>YouTube Data API v3</b> and press <b>Enable</b>.",
+					"<b>4.</b> Menu → <b>APIs &amp; Services</b> → <b>Credentials</b> → <b>Create credentials</b> → <b>API key</b>.",
+					"<b>5.</b> Copy the key (it starts with AIza) and paste it in the box above. Press <b>Test key</b>.",
+					"",
+					"<b>Using it:</b> in the Library open the <b>YouTube</b> tab, type a song, press Enter. Or type in any tab and tap “Search YouTube”.",
+					"",
+					"<b>Good to know:</b> the free quota is about 100 searches a day. Your key stays only on this device and is never shared. Without a key you can still play the database, your saved songs and any pasted YouTube link.",
+				}, "\n"),
+			}, steps)
+			styleText(help, false)
+			paint()
+		end
+
+		-- slot the new columns in right after the Chat page (the sheet lays columns out in list order)
+		for _, col in ipairs(cols) do
+			for k, v in ipairs(HOST.Cols) do if v == col then table.remove(HOST.Cols, k) break end end
+		end
+		local at = #HOST.Cols + 1
+		for k, v in ipairs(HOST.Cols) do if v.section > MUSIC.SECTION then at = k break end end
+		for n, col in ipairs(cols) do table.insert(HOST.Cols, at + n - 1, col) end
+		refreshNow()
+		refreshQueue()
+		loadDatabase(false)
+		HOST.Relayout()
+	end
+
+	local function destroyUI()
+		if not uiBuilt then return end
+		uiBuilt = false
+		pcall(function() HOST.RemoveColumns(cols) end)
+		cols = {}
+		for k in pairs(ui) do if k ~= "next" then ui[k] = nil end end
+		refreshAll, refreshLibrary, refreshQueue, refreshNow, onDatabase = nil, nil, nil, nil, nil
+		-- access taken back: a song you chose yourself stops (a server broadcast keeps playing)
+		local s = current()
+		if s and s.tag ~= "Broadcast" then
+			P.queue, P.idx = {}, 0
+			P.token += 1
+			P.status = "idle"
+			pcall(function() snd:Stop() end)
+		end
 	end
 
 	----------------------------------------------------------------- live updates (progress bar)
@@ -6375,15 +6649,26 @@ HOST.Run("Music", function()
 	end)
 
 	HOST.Gui.Destroying:Connect(function()
+		running = false
 		pcall(function() hb:Disconnect() end)
 		pcall(function() snd:Stop() snd:Destroy() end)
 		pcall(function() HOST.RemoveColumns(cols) end)
 	end)
 
-	refreshNow()
-	refreshQueue()
-	loadDatabase(false)
-	HOST.Relayout()
+	-- show the Music cards only while this player is allowed to use them (checked every 2 seconds)
+	task.spawn(function()
+		local allowed = false
+		while running do
+			local a = (HOST.Music and HOST.Music.canUse and HOST.Music.canUse()) and true or false
+			if a ~= allowed then
+				allowed = a
+				local ok, e = pcall(a and buildUI or destroyUI)
+				if not ok then HOST.Report("Music", tostring(e)) end
+			end
+			if uiBuilt and ui.paintMode then pcall(ui.paintMode) end
+			task.wait(2)
+		end
+	end)
 end)
 
 
@@ -7892,122 +8177,11 @@ end)
 
 apply()
 
------------------------------------------------------------------ galaxy loading screen (3.5 s) + chat message
+----------------------------------------------------------------- (the old galaxy loading screen was removed)
 gui.IgnoreGuiInset = true
 pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end)
 main.Visible = false
 circle.Visible = false
-do
-	local loader = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 4, 1, 4), BackgroundColor3 = Color3.fromRGB(4, 3, 10), BorderSizePixel = 0, ZIndex = 100, ClipsDescendants = true }, gui)
-	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.fromRGB(26, 10, 44), Color3.fromRGB(3, 3, 9)) }, loader)
-	if FRAME_ID ~= "" then
-		new("ImageLabel", {
-			Image = "rbxassetid://" .. FRAME_ID, BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Stretch,
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), ZIndex = 101,
-		}, loader)
-	end
-
-	-- soft nebula glows
-	local glows = {}
-	for _, d in ipairs({
-		{ 0.25, 0.30, 420, Color3.fromRGB(120, 40, 200) }, { 0.75, 0.65, 480, Color3.fromRGB(40, 90, 220) },
-		{ 0.55, 0.20, 320, Color3.fromRGB(220, 50, 140) },
-	}) do
-		local f = new("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(d[1], d[2]), Size = UDim2.fromOffset(d[3], d[3]),
-			BackgroundColor3 = d[4], BackgroundTransparency = 0.88, BorderSizePixel = 0, ZIndex = 100,
-		}, loader)
-		new("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
-		table.insert(glows, f)
-	end
-
-	-- falling stars
-	local stars = {}
-	local rng = Random.new()
-	for i = 1, 70 do
-		local sz = rng:NextInteger(1, 3)
-		local f = new("Frame", {
-			Size = UDim2.fromOffset(sz, sz), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = rng:NextNumber(0, 0.5),
-			BorderSizePixel = 0, ZIndex = 101,
-		}, loader)
-		new("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
-		table.insert(stars, { f = f, x = rng:NextNumber(), y = rng:NextNumber(), v = rng:NextNumber(0.06, 0.28) * (sz / 2 + 0.5), s = rng:NextNumber(0.5, 2) })
-	end
-	-- shooting stars
-	local shoots = {}
-	for i = 1, 4 do
-		local f = new("Frame", {
-			Size = UDim2.fromOffset(70, 2), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Rotation = 35, ZIndex = 102,
-			AnchorPoint = Vector2.new(1, 0.5),
-		}, loader)
-		new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }) }, f)
-		table.insert(shoots, { f = f, x = -1, y = 0, t = rng:NextNumber(0, 2.5) })
-	end
-
-	new("TextLabel", {
-		Text = "WELCOME TO", Font = Enum.Font.GothamMedium, TextSize = 20, TextColor3 = Color3.fromRGB(190, 190, 215), BackgroundTransparency = 1,
-		ZIndex = 103, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.40), Size = UDim2.fromOffset(400, 26),
-	}, loader)
-	local loadTitle = new("TextLabel", {
-		Text = "SAIKI GFX", Font = Enum.Font.GothamBold, TextSize = 50, TextColor3 = rgb, BackgroundTransparency = 1, ZIndex = 103,
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(500, 60),
-	}, loader)
-	local loadTrack = new("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.58), Size = UDim2.fromOffset(260, 6),
-		BackgroundColor3 = C.field, BorderSizePixel = 0, ZIndex = 103,
-	}, loader)
-	new("UICorner", { CornerRadius = UDim.new(0, 3) }, loadTrack)
-	local loadFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = rgb, BorderSizePixel = 0, ZIndex = 104 }, loadTrack)
-	new("UICorner", { CornerRadius = UDim.new(0, 3) }, loadFill)
-
-	local DUR = 0.15
-	local t0 = os.clock()
-	local lc
-	local function finish()
-		if lc then lc:Disconnect() lc = nil end
-		loader:Destroy()
-		main.Visible = true
-		circle.Visible = false
-		pcall(function()
-			local TCS = game:GetService("TextChatService")
-			local msg = ""
-			if false then
-				local ch = TCS:FindFirstChild("TextChannels") and TCS.TextChannels:FindFirstChild("RBXGeneral")
-				if ch then ch:SendAsync(msg) end
-			else
-				local ev = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
-				if ev then ev.SayMessageRequest:FireServer(msg, "All") end
-			end
-		end)
-	end
-	lc = track(RS.Heartbeat:Connect(function(dt)
-		local el = os.clock() - t0
-		loadFill.Size = UDim2.fromScale(math.min(el / DUR, 1), 1)
-		loadFill.BackgroundColor3 = rgb
-		loadTitle.TextColor3 = rgb
-		for k, gl in ipairs(glows) do
-			gl.Position = gl.Position + UDim2.fromScale(math.sin(el * 0.6 + k) * 0.0004, math.cos(el * 0.5 + k) * 0.0004)
-		end
-		for _, st in ipairs(stars) do
-			st.y = st.y + st.v * dt
-			st.x = st.x - st.v * 0.25 * dt
-			if st.y > 1.02 then st.y = -0.02; st.x = rng:NextNumber() end
-			if st.x < -0.02 then st.x = 1.02 end
-			st.f.Position = UDim2.fromScale(st.x, st.y)
-			st.f.BackgroundTransparency = 0.25 + 0.4 * (0.5 + 0.5 * math.sin(el * st.s * 3))
-		end
-		for _, sh in ipairs(shoots) do
-			sh.t = sh.t - dt
-			if sh.t <= 0 then
-				sh.x, sh.y, sh.t = rng:NextNumber(0.3, 1.1), rng:NextNumber(-0.1, 0.3), rng:NextNumber(1.5, 3.5)
-			end
-			sh.x = sh.x - dt * 0.9
-			sh.y = sh.y + dt * 0.63
-			sh.f.Position = UDim2.fromScale(sh.x, sh.y)
-		end
-		if el >= DUR then finish() end
-	end))
-end
 
 
 end)
