@@ -57,7 +57,9 @@ end
 local HOST = {}
 -- the current look (the Theme picker in Settings changes it through HOST.SetTheme): new cards and the dock read it
 HOST.Th = { cardA = Color3.fromRGB(8, 8, 9), cardB = Color3.fromRGB(26, 26, 28), rim = Color3.new(1, 1, 1), shine = Color3.new(1, 1, 1),
-    accA = Color3.fromRGB(242, 242, 244), text = SAIKIUI.text, mut = SAIKIUI.mut, tri = SAIKIUI.red, dim = Color3.new(0, 0, 0) }
+    accA = Color3.fromRGB(242, 242, 244), text = SAIKIUI.text, mut = SAIKIUI.mut, tri = SAIKIUI.red, dim = Color3.new(0, 0, 0),
+    field = Color3.fromRGB(26, 26, 31), btn = Color3.fromRGB(34, 34, 40) }
+HOST.ThemeHooks = {} -- modules register a function(theme) here to refresh colours they keep in locals
 HOST.Gui = Instance.new("ScreenGui")
 HOST.Gui.Name = "SAIKI_UNIFIED"
 HOST.Gui.ResetOnSpawn = false
@@ -136,6 +138,7 @@ pageSub.Parent = HOST.Sheet
 ----------------------------------------------------------------
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Name = "SaikiScroll"
+Scroll:SetAttribute("HostTheme", true)
 Scroll.BackgroundTransparency = 1
 Scroll.BorderSizePixel = 0
 Scroll.Position = UDim2.fromOffset(0, 84)
@@ -252,6 +255,7 @@ function HOST.Relayout()
                     local rad = pill and UDim.new(0, math.floor(h / 2)) or UDim.new(0, math.floor((c.r or 18) * s + 0.5))
                     c.corner.CornerRadius = rad
                     if c.shineCorner then c.shineCorner.CornerRadius = rad end
+                    if c.fillCorner then c.fillCorner.CornerRadius = rad end
                     if c.shine then c.shine.Size = UDim2.new(1, 0, 0, pill and math.floor(h) or math.floor(46 * s)) end
                 end
                 y += h + GAP_Y * s
@@ -299,6 +303,7 @@ function HOST.Column(section, width, valign)
     function col.Card(h, name, plain)
         local card = Instance.new("Frame")
         card.Name = name or "Card"
+        card:SetAttribute("HostTheme", true) -- HOST.SetTheme owns this card (body, rim, shine)
         card.BackgroundColor3 = Color3.new(1, 1, 1) -- the body gradient below gives the colour
         card.BackgroundTransparency = 0.05
         card.BorderSizePixel = 0
@@ -329,8 +334,9 @@ function HOST.Column(section, width, valign)
         local us = Instance.new("UIScale")
         us.Parent = stage
         -- soft white shine along the top edge (clipped to the card's rounded corners)
-        local shine = Instance.new("CanvasGroup")
+        local shine = Instance.new("Frame")
         shine.Name = "SurfaceShine"
+        shine:SetAttribute("HostTheme", true)
         shine.BackgroundTransparency = 1
         shine.BorderSizePixel = 0
         shine.Size = UDim2.new(1, 0, 0, 46)
@@ -341,12 +347,14 @@ function HOST.Column(section, width, valign)
         local shineCorner = Instance.new("UICorner", shine)
         local shineFill = Instance.new("Frame")
         shineFill.Name = "Fill"
+        shineFill:SetAttribute("HostTheme", true)
         shineFill.Size = UDim2.fromScale(1, 1)
         shineFill.BackgroundColor3 = HOST.Th.shine
         shineFill.BackgroundTransparency = 0.84
         shineFill.BorderSizePixel = 0
         shineFill.Active = false
         shineFill.Parent = shine
+        local fillCorner = Instance.new("UICorner", shineFill)
         local shineGrad = Instance.new("UIGradient", shineFill)
         shineGrad.Rotation = 90
         shineGrad.Transparency = NumberSequence.new({
@@ -354,7 +362,7 @@ function HOST.Column(section, width, valign)
             NumberSequenceKeypoint.new(0.62, 0.94), NumberSequenceKeypoint.new(1, 1),
         })
         local c = { frame = card, stage = stage, scale = us, h = h, corner = cornerObj, r = CARD_R[name] or 18,
-            shine = shine, shineCorner = shineCorner }
+            shine = shine, shineCorner = shineCorner, fillCorner = fillCorner }
         col.cards[#col.cards + 1] = c
         HOST.Relayout()
         return stage, c
@@ -388,6 +396,7 @@ end)
 
 local Toggle = Instance.new("TextButton")
 Toggle.Name = "SaikiToggle"
+Toggle:SetAttribute("HostTheme", true)
 Toggle.Size = UDim2.fromOffset(142, 38)
 Toggle.AnchorPoint = Vector2.new(0.5, 0)
 Toggle.Position = UDim2.new(0.5, 0, 0, 16)
@@ -404,6 +413,7 @@ ts.Color = Color3.new(1, 1, 1)
 ts.Transparency = 0.86
 ts.Thickness = 1
 local tri = Instance.new("TextLabel")
+tri:SetAttribute("HostTheme", true)
 tri.BackgroundTransparency = 1
 tri.Position = UDim2.fromOffset(18, 0)
 tri.Size = UDim2.fromOffset(20, 38)
@@ -414,6 +424,7 @@ tri.Font = Enum.Font.GothamBold
 tri.ZIndex = 501
 tri.Parent = Toggle
 local triName = Instance.new("TextLabel")
+triName:SetAttribute("HostTheme", true)
 triName.BackgroundTransparency = 1
 triName.Position = UDim2.fromOffset(44, 0)
 triName.Size = UDim2.new(1, -52, 1, 0)
@@ -441,6 +452,7 @@ local DOCK_ITEMS = {
 }
 local Dock = Instance.new("Frame")
 Dock.Name = "SaikiDock"
+Dock:SetAttribute("HostTheme", true)
 Dock.AnchorPoint = Vector2.new(0.5, 1)
 Dock.AutomaticSize = Enum.AutomaticSize.X
 Dock.Size = UDim2.fromOffset(0, 42)
@@ -498,6 +510,7 @@ for i, it in ipairs(DOCK_ITEMS) do
             end
         end
     end)
+    b:SetAttribute("HostTheme", true)
     dockBtns[i] = b
 end
 
@@ -574,7 +587,8 @@ local RunService = game:GetService("RunService")
 function HOST.SetTheme(th, instant)
     local Th, old = HOST.Th, {}
     for k, v in pairs(Th) do old[k] = v end
-    for _, k in ipairs({ "cardA", "cardB", "rim", "shine", "accA", "mut", "text", "tri", "dim" }) do
+    for _, f in ipairs(HOST.ThemeHooks) do pcall(f, th) end
+    for _, k in ipairs({ "cardA", "cardB", "rim", "shine", "accA", "mut", "text", "tri", "dim", "field", "btn" }) do
         if th[k] ~= nil then Th[k] = th[k] end
     end
     local function put(o, goal)
@@ -768,6 +782,7 @@ function FX.gradientText(label, speed)
     end
 
     local clock, lastOff, lastKey = 0, nil, nil
+    local gAcc = 0
     local conn
     conn = RunService.Heartbeat:Connect(function(dt)
         if not label.Parent then
@@ -776,6 +791,9 @@ function FX.gradientText(label, speed)
         end
         if not HOST.Sheet.Visible then return end
         clock += dt
+        gAcc += dt
+        if gAcc < 0.066 then return end
+        gAcc = 0
         local swing = (clock / speed) % 2
         local t = swing < 1 and swing or 2 - swing
         local off = math.floor((0.5 - math.cos(math.pi * t) / 2) * 2000 + 0.5) / 10
@@ -803,6 +821,7 @@ do
     local DIM_T, FOV_ADD = 0.6, 15 -- background transparency while open / extra field of view
     local dim = Instance.new("Frame")
     dim.Name = "SaikiDim"
+    dim:SetAttribute("HostTheme", true)
     dim.BackgroundColor3 = Color3.new(0, 0, 0)
     dim.BackgroundTransparency = 1
     dim.BorderSizePixel = 0
@@ -1010,6 +1029,7 @@ if HOST_OPTIONS then
     RunService.Heartbeat:Connect(function()
         local h, root = getHum(), getRoot()
         if not h then return end
+        if not (OPT.speed.on or OPT.jump.on or OPT.fly.on or orig.speed ~= nil or orig.jump ~= nil or bv or bg) then return end
         -- speed
         if OPT.speed.on then
             if orig.speed == nil then orig.speed = h.WalkSpeed end
@@ -1148,7 +1168,7 @@ if HOST_OPTIONS then
             else
                 TweenService:Create(b, TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), goal):Play()
             end
-            b.BackgroundColor3 = ON_COL
+            b.BackgroundColor3 = HOST.Th.accA
         end
         -- hold a stepper to keep stepping
         local function repeater(btn, fn)
@@ -1429,9 +1449,9 @@ local CACHE = "SaikiChatHubCache"
 local STICKER_CACHE = CACHE .. "/stickers"
 
 local CONFIG = {
-	POLL = 2.5,              -- seconds per scheduler tick
+	POLL = 3.5,              -- seconds per scheduler tick
 	HISTORY = 40,            -- messages loaded when a stream starts
-	MAX_MESSAGES = 80,       -- rows kept per chat view
+	MAX_MESSAGES = 60,       -- rows kept per chat view
 	MAX_LEN = 200,
 	COOLDOWN_SERVER = 3,
 	COOLDOWN_DM = 3,
@@ -4542,14 +4562,17 @@ end
 local function mk(bg, accA, accB, o)
 	local t = { bg = bg, accA = accA, accB = accB, text = Color3.fromRGB(244, 244, 244), mut = Color3.fromRGB(160, 160, 160), ov = WHITEC, bgT = 0.12 }
 	if o then for k, v in pairs(o) do t[k] = v end end
-	t.cardA = t.cardA or shade(bg, 0.5)
-	t.cardB = t.cardB or shade(bg, 1.8)
+	-- coloured themes get cards that carry a visible tint of the accent (neutral ones stay near-black)
+	t.cardA = t.cardA or (t.neutral and shade(bg, 0.5) or shade(bg, 0.6):Lerp(accA, 0.05))
+	t.cardB = t.cardB or (t.neutral and shade(bg, 1.8) or shade(bg, 1.8):Lerp(accA, 0.11))
 	t.rim = t.rim or (t.neutral and WHITEC or accA)
 	t.shine = t.shine or t.rim
 	t.tri = t.tri or (t.neutral and Color3.fromRGB(239, 68, 68) or accA)
 	t.dim = t.dim or shade(bg, 0.3)
 	if not t.neutral and t.ov == WHITEC then t.ov = WHITEC:Lerp(accA, 0.3) end -- panels pick up a hint of the accent
 	t.tag = t.tag or ""
+	t.field = t.field or (t.neutral and Color3.fromRGB(26, 26, 31) or bg:Lerp(accA, 0.10)) -- input boxes / dark panels (Music, ...)
+	t.btn = t.btn or (t.neutral and Color3.fromRGB(34, 34, 40) or bg:Lerp(accA, 0.16))
 	return t
 end
 local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
@@ -4790,7 +4813,7 @@ do
 	local function ckey(c) return math.floor(c.R * 255 + 0.5) * 65536 + math.floor(c.G * 255 + 0.5) * 256 + math.floor(c.B * 255 + 0.5) end
 	local WHITEK = 16777215
 	local ROLE, OVSET = {}, {}
-	local ROLES = { "bg", "cardA", "accA", "accB", "text", "mut" }
+	local ROLES = { "bg", "cardA", "accA", "accB", "text", "mut", "field", "btn" }
 	local function register(th)
 		for _, r in ipairs(ROLES) do
 			local k = ckey(th[r])
@@ -4800,7 +4823,7 @@ do
 	end
 	for _, th in pairs(THEMES) do register(th) end
 	ROLE[ckey(Color3.fromRGB(150, 150, 156))] = ROLE[ckey(Color3.fromRGB(150, 150, 156))] or "mut" -- the muted grey other tabs use
-	local BG_ROLES = { bg = true, cardA = true, accA = true, accB = true }
+	local BG_ROLES = { bg = true, cardA = true, accA = true, accB = true, field = true, btn = true }
 	local TX_ROLES = { text = true, mut = true, accA = true, accB = true }
 	local function hasGrad(o) return o:FindFirstChildOfClass("UIGradient") ~= nil end
 	local function bgRole(o)
@@ -4813,6 +4836,18 @@ do
 		local r = ROLE[k]
 		if r and BG_ROLES[r] then return r end
 		return nil
+	end
+	-- objects the recolor must not touch: HOST.SetTheme owns the host pieces, and "NoTheme" marks swatches / sky pictures
+	local function frozen(o)
+		if o:GetAttribute("HostTheme") then return true end
+		local par = o.Parent
+		if par and par:GetAttribute("HostTheme") then return true end
+		local p = o
+		while p and p ~= gui do
+			if p:GetAttribute("NoTheme") then return true end
+			p = p.Parent
+		end
+		return false
 	end
 	local function inButton(o)
 		local btn = gui:FindFirstChild("SaikiButton") -- the open/close button keeps its own look in every theme
@@ -4833,7 +4868,7 @@ do
 		end
 		local list = gui:GetDescendants()
 		for i, o in ipairs(list) do
-			if not inButton(o) then
+			if not inButton(o) and not frozen(o) then
 				if o:IsA("GuiObject") then
 					add(o, "BackgroundColor3", bgRole(o), BG_ROLES)
 					if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
@@ -4901,7 +4936,7 @@ do
 	end
 	-- things created later (new chat messages, popups, tabs built after a theme change) are put in the current theme straight away
 	local function applyNew(o, th)
-		if not th or not o.Parent or inButton(o) then return end
+		if not th or not o.Parent or inButton(o) or frozen(o) then return end
 		if o:IsA("GuiObject") then
 			local r = bgRole(o)
 			if r and th[r] and ckey(th[r]) ~= ckey(o.BackgroundColor3) then o.BackgroundColor3 = th[r] end
@@ -4927,8 +4962,9 @@ do
 		local str = stroke(sel and 0.35 or 0.92)
 		str.Parent = btn
 		local sw = new("UIGradient", { Color = ColorSequence.new(nudge(th.accA), nudge(th.accB)), Rotation = 0 })
-		new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 5), Size = UDim2.fromOffset(26, 8),
+		local swatch = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 5), Size = UDim2.fromOffset(26, 8),
 			BackgroundColor3 = WHITE, Parent = btn }, { corner(4), sw })
+		swatch:SetAttribute("NoTheme", true) -- a theme's preview colours must never be recoloured
 		new("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -4), Size = UDim2.new(1, -8, 0, 14),
 			BackgroundTransparency = 1, Text = name, Font = T.fontB, TextSize = 11, TextScaled = true, TextColor3 = T.text, Parent = btn },
 			{ new("UITextSizeConstraint", { MaxTextSize = 11, MinTextSize = 7 }) })
@@ -5455,7 +5491,11 @@ HOST.Run("Music", function()
 	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(8, 8, 10)
 	local TXT, MUT = SAIKIUI.text, SAIKIUI.mut
 	local RED = SAIKIUI.red
-	local FIELD, BTN = Color3.fromRGB(26, 26, 31), Color3.fromRGB(34, 34, 40)
+	local FIELD, BTN = HOST.Th.field or Color3.fromRGB(26, 26, 31), HOST.Th.btn or Color3.fromRGB(34, 34, 40)
+	HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function(th)
+		TXT, MUT = th.text, th.mut
+		FIELD, BTN = th.field or FIELD, th.btn or BTN
+	end
 	local GREEN, WARN = Color3.fromRGB(60, 200, 130), Color3.fromRGB(255, 150, 150)
 	local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
 
@@ -7265,7 +7305,8 @@ local SKY_META = {
 	local HttpService = game:GetService("HttpService")
 	local MarketplaceService = game:GetService("MarketplaceService")
 	local WHITE, INK = Color3.new(1, 1, 1), Color3.fromRGB(18, 18, 20)
-	local TXT, MUT = Color3.fromRGB(244, 244, 244), Color3.fromRGB(150, 150, 156)
+	local TXT, MUT = SAIKIUI.text, SAIKIUI.mut
+	HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function(th) TXT, MUT = th.text, th.mut end
 	local GREEN = Color3.fromRGB(52, 199, 89)
 	local SEC_GFX, SEC_SKY = 3, 4
 	local LEFT, CENTER, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
@@ -7822,6 +7863,7 @@ local SKY_META = {
 			rc(r, 12)
 			strokes[p[1]] = line(r)
 			local dot = new("Frame", { Position = UDim2.fromOffset(12, 11), Size = UDim2.fromOffset(18, 18), BackgroundColor3 = p[2], BorderSizePixel = 0 }, r)
+			dot:SetAttribute("NoTheme", true)
 			rc(dot, 9)
 			txt(r, p[1], 12, true, TXT, { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(1, -54, 1, 0) })
 			r.Activated:Connect(function()
@@ -7921,6 +7963,10 @@ local SKY_META = {
 		end
 		local tAcc, frames = 0, 0
 		track(RS.Heartbeat:Connect(function(dt)
+			if not HOST.Sheet.Visible then
+				tAcc, frames = 0, 0
+				return
+			end
 			tAcc = tAcc + dt
 			frames = frames + 1
 			if tAcc < 0.25 then return end
@@ -8180,6 +8226,7 @@ local SKY_META = {
 		rc(cell, 14)
 		local sk = line(cell, 0.9)
 		local cover = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, ClipsDescendants = true }, cell)
+		cover:SetAttribute("NoTheme", true)
 		buildCover(cover, name)
 		local shade = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0 }, cell)
 		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0.2) }) }, shade)
@@ -8202,6 +8249,7 @@ local SKY_META = {
 
 	-- detail card (like the script page: cover, name, stats, tags, Apply)
 	local coverBig = new("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.new(1, -24, 0, 130), BackgroundColor3 = WHITE, BorderSizePixel = 0, ClipsDescendants = true }, stDet)
+	coverBig:SetAttribute("NoTheme", true)
 	rc(coverBig, 14)
 	local dName = txt(stDet, "", 16, true, TXT, { Position = UDim2.fromOffset(14, 150), Size = UDim2.new(1, -28, 0, 20) })
 	local dSub = txt(stDet, "", 11, false, MUT, { Position = UDim2.fromOffset(14, 171), Size = UDim2.new(1, -28, 0, 14) })
@@ -8308,7 +8356,7 @@ local cur = 0
 local skyT = 0
 track(RS.Heartbeat:Connect(function(dt)
 	skyT += dt
-	if S.skyOn and skyT > 1 then
+	if S.skyOn and skyT > 3 then
 		skyT = 0
 		pcall(applySky)
 	end
