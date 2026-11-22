@@ -3160,7 +3160,7 @@ local function searchLocal(q)
 	for pid, e in pairs(index) do if e.l then consider(cands, pid, e.n, e.u, 1, "Recent", q) end end
 	for id, f in pairs(friends) do consider(cands, id, f.d, f.n, 2, "Friend", q) end
 	for _, p in ipairs(Players:GetPlayers()) do consider(cands, tostring(p.UserId), p.DisplayName, p.Name, 3, "In server", q) end
-	for id, u in pairs(directory) do consider(cands, id, u.d, u.n, 3, "On Saiki", q) end
+	for id, u in pairs(directory) do consider(cands, id, u.d, u.n, 3, "Directory", q) end
 	return cands
 end
 local function renderResults(cands, pending)
@@ -3179,8 +3179,8 @@ local function renderResults(cands, pending)
 		if c.tier ~= lastTier then lastTier = c.tier; order += 1; addHeader(feed, heads[c.tier], order) end
 		order += 1
 		local tags = {}
-		for _, t in ipairs({ "Recent", "Friend", "In server", "On Saiki", "Roblox" }) do if c.tags[t] then tags[#tags + 1] = t end end
-		local who = (c.user and c.user ~= "") and ("@" .. c.user .. "  •  ") or ""
+		for _, t in ipairs({ "Recent", "Friend", "In server", "Roblox" }) do if c.tags[t] then tags[#tags + 1] = t end end
+		local who = (c.user and c.user ~= "") and ("@" .. c.user .. ((#tags > 0) and "  •  " or "")) or ""
 		makeRow(feed, { id = c.id, name = c.name, user = c.user, sub = who .. table.concat(tags, " • "),
 			unread = isUnread(c.id) }, order)
 	end
@@ -3262,7 +3262,7 @@ local function buildServer()
 		if a.rank ~= b.rank then return a.rank > b.rank end
 		return a.name:lower() < b.name:lower()
 	end)
-	addHeader(serverFeed, "In this server", 1, (#arr > 0) and (#arr .. " here  •  ● on Saiki") or nil)
+	addHeader(serverFeed, "In this server", 1, (#arr > 0) and (#arr .. " here") or nil)
 	if #arr == 0 then addEmpty(serverFeed, "No other players in this server.", 2, 34) else addStrip(serverFeed, arr, 2) end
 	serverFeed.CanvasPosition = keep
 end
@@ -9251,6 +9251,57 @@ HOST.Run("Trolls", function()
 		paintPace()
 		txt(stSmoke, "Chill = long breaks, Chain = short breaks. Only you see the smoke.", 11, false, "m", { Position = UDim2.fromOffset(14, 192), Size = UDim2.new(1, -28, 0, 30), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
 		HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function() paintPace() end
+	end
+
+	-- 5. CREDITS (very end of the page, after the Trolls)
+	do
+		local cE = HOST.Column(SEC, 340)
+		local grads = {}
+		local GOLD = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 214, 80)), ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 150, 40)), ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 214, 80)) })
+		local NEON = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 160)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 190, 70)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(90, 255, 160)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(70, 200, 255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(170, 110, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 160)) })
+		local function credit(h, name, role, who, user, palette, big)
+			local st = cE.Card(h, name)
+			local rim = new("Frame", { Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 1, -10), BackgroundTransparency = 1 }, st)
+			rc(rim, big and 22 or 18)
+			local rs = new("UIStroke", { Color = WHITE, Thickness = big and 3 or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, rim)
+			grads[#grads + 1] = new("UIGradient", { Color = palette }, rs)
+			local sz = big and 84 or 64
+			local ax = 22
+			local av = new("Frame", { Position = UDim2.fromOffset(ax, (h - sz) / 2), Size = UDim2.fromOffset(sz, sz), BackgroundColor3 = INK, BorderSizePixel = 0 }, st)
+			rc(av, sz)
+			txt(av, who:sub(1, 1), big and 34 or 26, true, WHITE, { Size = UDim2.fromScale(1, 1), TextXAlignment = CENTER })
+			local img = new("ImageLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = "", ZIndex = 8 }, av)
+			rc(img, sz)
+			local avs = new("UIStroke", { Color = WHITE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, av)
+			grads[#grads + 1] = new("UIGradient", { Color = palette }, avs)
+			task.spawn(function()
+				local ok, uid = pcall(function() return Players:GetUserIdFromNameAsync(user) end)
+				if ok and uid and img.Parent then img.Image = thumbUrl(uid) end
+			end)
+			local tx = ax + sz + 16
+			local r = txt(st, role, big and 12 or 11, true, WHITE, { Position = UDim2.fromOffset(tx, h / 2 - (big and 44 or 38)), Size = UDim2.new(1, -(tx + 16), 0, 30), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Bottom })
+			grads[#grads + 1] = new("UIGradient", { Color = palette }, r)
+			local n = txt(st, who, big and 30 or 24, true, WHITE, { Position = UDim2.fromOffset(tx, h / 2 - (big and 12 or 8)), Size = UDim2.new(1, -(tx + 16), 0, big and 34 or 28) })
+			grads[#grads + 1] = new("UIGradient", { Color = palette }, n)
+			txt(st, "@" .. user, 12, true, "m", { Position = UDim2.fromOffset(tx, h / 2 + (big and 24 or 20)), Size = UDim2.new(1, -(tx + 16), 0, 16) })
+		end
+		credit(170, "CreditArchitect", "★ ARCHITECT OF GUI & ENTIRE SCRIPT ★", "SAIKI", "Moosman99999", GOLD, true)
+		credit(120, "CreditKnown", "COMPLETE GFX", "KNOWN", "yorichii_566", NEON, false)
+		credit(120, "CreditKabir", "BACKEND OF CHAT", "KABIR", "Kabir_Priv", NEON, false)
+		local t0 = 0
+		local cr = RunService.Heartbeat:Connect(function(dt)
+			t0 += dt
+			for i, g in ipairs(grads) do
+				if g.Parent then g.Rotation = (t0 * 70 + i * 40) % 360 end
+			end
+		end)
+		HOST.Gui.Destroying:Connect(function() cr:Disconnect() end)
 	end
 
 	------------------------------------------------------------ start
