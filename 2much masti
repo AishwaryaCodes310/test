@@ -5650,20 +5650,21 @@ end)
 end)()
 
 ----------------------------------------------------------------- head banner: every Saiki Rechat user gets a themed banner over their head (seen by other Saiki Rechat users)
--- Far away it is a slim banner. When you walk close it morphs into a chat bubble that shows that player's latest message.
--- Colours always follow YOUR OWN current theme (Settings > Appearance).
+-- Far away it is a slim banner over the character. When you walk close the banner vanishes (nothing in its place). If that player
+-- then says something in Saiki Rechat server chat, a Saiki chat bubble pops up over them and stays as long as a normal Roblox
+-- chat bubble does, then vanishes. Colours always follow YOUR OWN current theme (Settings > Appearance).
 -- Who counts as "running Saiki Rechat in this server": each client writes a heartbeat to /servers/<job>/presence/<id> and reads the
 -- others. If the database rules refuse that path it falls back to the Saiki user directory (everyone who has a profile).
 ;(function()
 	local HB = {
 		ENABLED = true,
 		SHOW_SELF = false,      -- true = also draw it over your own head
-		TEXT = "Simple Rechat", -- banner / idle bubble text
-		NEAR = 14,              -- studs: closer than this = full chat bubble
-		FAR = 26,               -- studs: farther than this = banner
+		TEXT = "Simple Rechat", -- banner text
+		NEAR = 14,              -- studs: closer than this = banner fully gone (chat bubble can show)
+		FAR = 26,               -- studs: farther than this = banner fully shown
 		MAX_DIST = 220,         -- hidden beyond this
-		LIFT = 3.3,             -- studs above the head
-		MSG_SECONDS = 12,       -- how long a message stays in the bubble
+		LIFT = 3.4,             -- studs above the head
+		MSG_SECONDS = 15,       -- how long a bubble stays (same as Roblox's default chat bubble; the game's own setting is used if readable)
 		WRITE_EVERY = 30, READ_EVERY = 10, FRESH_MS = 100000,
 	}
 	if not REQUEST then return end
@@ -5675,7 +5676,11 @@ end)()
 		pcall(function() holder.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
 	end
 
-	------------------------------------------------------------- latest messages (Roblox chat + Saiki server chat)
+	------------------------------------------------------------- latest Saiki Rechat messages (server chat only)
+	pcall(function()
+		local d = TextChatService:FindFirstChildOfClass("BubbleChatConfiguration")
+		if d and tonumber(d.BubbleDuration) then HB.MSG_SECONDS = d.BubbleDuration end
+	end)
 	local lastMsg = {} -- [userId] = { text, at }
 	local function noteMsg(uid, text)
 		uid = tonumber(uid)
@@ -5683,15 +5688,6 @@ end)()
 			lastMsg[uid] = { text = cut((text:gsub("%c", " ")), 90), at = os.clock() }
 		end
 	end
-	pcall(function()
-		bind(TextChatService.MessageReceived, function(m)
-			local s = m.TextSource
-			if s then noteMsg(s.UserId, m.Text) end
-		end)
-	end)
-	local function hookChatted(p) pcall(function() bind(p.Chatted, function(msg) noteMsg(p.UserId, msg) end) end) end
-	for _, p in ipairs(Players:GetPlayers()) do hookChatted(p) end
-	bind(Players.PlayerAdded, hookChatted)
 	local origShow = T.showServer
 	if type(origShow) == "function" then
 		T.showServer = function(uid, name, text, stk, key, reply, silent)
@@ -5918,19 +5914,25 @@ end)()
 				local dist = (head.Position - cam.CFrame.Position).Magnitude
 				local goal = math.clamp((HB.FAR - dist) / (HB.FAR - HB.NEAR), 0, 1)
 				t.mix += (goal - t.mix) * alpha
+				-- banner: only when far (fades out completely when close, nothing replaces it)
 				t.bg.GroupTransparency = t.mix
-				t.cg.GroupTransparency = 1 - t.mix
 				t.bg.Visible = t.mix < 0.98
-				t.cg.Visible = t.mix > 0.02
-				-- what the bubble says: their latest message, or the idle label
+				-- bubble: only while this player's Saiki Rechat message is fresh, and only when close
 				local m = lastMsg[uid]
-				local fresh = m and (now - m.at) < HB.MSG_SECONDS
-				local want = fresh and m.text or ("💬 " .. HB.TEXT)
-				if t.shown ~= want then
-					t.shown = want
-					t.mtxt.Text = want
-					t.mtxt.Font = fresh and Enum.Font.GothamMedium or Enum.Font.GothamBold
-					t.mtxt.TextColor3 = fresh and th.text or T.accA
+				local age = m and (now - m.at) or math.huge
+				if age < HB.MSG_SECONDS then
+					if t.shown ~= m.text then
+						t.shown = m.text
+						t.mtxt.Text = m.text
+						t.mtxt.TextColor3 = th.text
+					end
+					local fadeIn = math.clamp(age / 0.25, 0, 1)
+					local fadeOut = math.clamp((HB.MSG_SECONDS - age) / 0.5, 0, 1)
+					t.cg.GroupTransparency = 1 - (t.mix * fadeIn * fadeOut)
+					t.cg.Visible = t.cg.GroupTransparency < 0.98
+				else
+					t.cg.Visible = false
+					t.shown = ""
 				end
 			end
 		end
