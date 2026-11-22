@@ -9271,7 +9271,7 @@ HOST.Run("Trolls", function()
 			rc(rim, big and 22 or 18)
 			local rs = new("UIStroke", { Color = WHITE, Thickness = big and 3 or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, rim)
 			grads[#grads + 1] = new("UIGradient", { Color = palette }, rs)
-			local sz = big and 84 or 64
+			local sz = big and 76 or 60
 			local ax = 22
 			local av = new("Frame", { Position = UDim2.fromOffset(ax, (h - sz) / 2), Size = UDim2.fromOffset(sz, sz), BackgroundColor3 = INK, BorderSizePixel = 0 }, st)
 			rc(av, sz)
@@ -9291,9 +9291,9 @@ HOST.Run("Trolls", function()
 			grads[#grads + 1] = new("UIGradient", { Color = palette }, n)
 			txt(st, "@" .. user, 12, true, "m", { Position = UDim2.fromOffset(tx, h / 2 + (big and 24 or 20)), Size = UDim2.new(1, -(tx + 16), 0, 16) })
 		end
-		credit(170, "CreditArchitect", "★ ARCHITECT OF GUI & ENTIRE SCRIPT ★", "SAIKI", "Moosman99999", GOLD, true)
-		credit(120, "CreditKnown", "COMPLETE GFX", "KNOWN", "yorichii_566", NEON, false)
-		credit(120, "CreditKabir", "BACKEND OF CHAT", "KABIR", "Kabir_Priv", NEON, false)
+		credit(150, "CreditArchitect", "★ ARCHITECT OF GUI & ENTIRE SCRIPT ★", "SAIKI", "Moosman99999", GOLD, true)
+		credit(94, "CreditKnown", "COMPLETE GFX", "KNOWN", "yorichii_566", NEON, false)
+		credit(94, "CreditKabir", "BACKEND OF CHAT", "KABIR", "Kabir_Priv", NEON, false)
 		local t0 = 0
 		local cr = RunService.Heartbeat:Connect(function(dt)
 			t0 += dt
