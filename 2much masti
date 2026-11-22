@@ -55,6 +55,9 @@ local function styleText(label, bold)
 end
 
 local HOST = {}
+-- the current look (the Theme picker in Settings changes it through HOST.SetTheme): new cards and the dock read it
+HOST.Th = { cardA = Color3.fromRGB(8, 8, 9), cardB = Color3.fromRGB(26, 26, 28), rim = Color3.new(1, 1, 1), shine = Color3.new(1, 1, 1),
+    accA = Color3.fromRGB(242, 242, 244), text = SAIKIUI.text, mut = SAIKIUI.mut, tri = SAIKIUI.red, dim = Color3.new(0, 0, 0) }
 HOST.Gui = Instance.new("ScreenGui")
 HOST.Gui.Name = "SAIKI_UNIFIED"
 HOST.Gui.ResetOnSpawn = false
@@ -307,9 +310,9 @@ function HOST.Column(section, width, valign)
         local shade = Instance.new("UIGradient", card)
         shade.Name = "Body"
         shade.Rotation = 90
-        shade.Color = ColorSequence.new(Color3.fromRGB(8, 8, 9), Color3.fromRGB(26, 26, 28))
+        shade.Color = ColorSequence.new(HOST.Th.cardA, HOST.Th.cardB)
         local st = Instance.new("UIStroke", card)
-        st.Color = Color3.new(1, 1, 1)
+        st.Color = HOST.Th.rim
         st.Transparency = 0
         local rimGrad = Instance.new("UIGradient", st)
         rimGrad.Rotation = 90
@@ -339,7 +342,7 @@ function HOST.Column(section, width, valign)
         local shineFill = Instance.new("Frame")
         shineFill.Name = "Fill"
         shineFill.Size = UDim2.fromScale(1, 1)
-        shineFill.BackgroundColor3 = Color3.new(1, 1, 1)
+        shineFill.BackgroundColor3 = HOST.Th.shine
         shineFill.BackgroundTransparency = 0.84
         shineFill.BorderSizePixel = 0
         shineFill.Active = false
@@ -532,7 +535,7 @@ local function paintDock()
             dockOn[i] = on
             local goal = {
                 BackgroundTransparency = on and 0 or 1,
-                TextColor3 = on and Color3.fromRGB(18, 18, 20) or SAIKIUI.mut,
+                TextColor3 = on and Color3.fromRGB(18, 18, 20) or HOST.Th.mut,
             }
             if first then
                 for k, val in pairs(goal) do b[k] = val end
@@ -564,6 +567,66 @@ local FX_ENABLED = true
 local FX = { closing = false }
 HOST.FX = FX
 local RunService = game:GetService("RunService")
+
+-- THEMES: the Theme picker (Settings > Appearance) calls this. It restyles everything the host owns: the card bodies and
+-- rims, the dock, the top capsule, the scroll bar and the dimmed background. Panels/text inside the cards are recoloured
+-- by the picker itself.
+function HOST.SetTheme(th, instant)
+    local Th, old = HOST.Th, {}
+    for k, v in pairs(Th) do old[k] = v end
+    for _, k in ipairs({ "cardA", "cardB", "rim", "shine", "accA", "mut", "text", "tri", "dim" }) do
+        if th[k] ~= nil then Th[k] = th[k] end
+    end
+    local function put(o, goal)
+        if not o then return end
+        if instant then
+            for k, v in pairs(goal) do o[k] = v end
+        else
+            tween(o, 0.5, goal)
+        end
+    end
+    local bodies = {}
+    for _, col in ipairs(HOST.Cols) do
+        for _, c in ipairs(col.cards) do
+            local f = c.frame
+            put(f:FindFirstChildOfClass("UIStroke"), { Color = Th.rim })
+            put(c.shine and c.shine:FindFirstChild("Fill"), { BackgroundColor3 = Th.shine })
+            local g = f:FindFirstChild("Body")
+            if g then bodies[#bodies + 1] = g end
+        end
+    end
+    put(Dock, { BackgroundColor3 = Th.cardA })
+    put(Dock:FindFirstChildOfClass("UIStroke"), { Color = Th.rim })
+    for _, b in ipairs(dockBtns) do put(b, { BackgroundColor3 = Th.accA }) end
+    put(Toggle, { BackgroundColor3 = Th.cardA })
+    put(Toggle:FindFirstChildOfClass("UIStroke"), { Color = Th.rim })
+    put(tri, { TextColor3 = Th.tri })
+    put(triName, { TextColor3 = Th.text })
+    put(Scroll, { ScrollBarImageColor3 = Th.accA })
+    if HOST.Dim then put(HOST.Dim, { BackgroundColor3 = Th.dim }) end
+    dockOn = {}
+    paintDock()
+    -- gradients can't be tweened: blend the card bodies frame by frame
+    local function blend(e)
+        local a, b = old.cardA:Lerp(Th.cardA, e), old.cardB:Lerp(Th.cardB, e)
+        for _, g in ipairs(bodies) do
+            if g.Parent then g.Color = ColorSequence.new(a, b) end
+        end
+    end
+    if instant then
+        blend(1)
+    else
+        task.spawn(function()
+            local t0 = os.clock()
+            while true do
+                local f = math.clamp((os.clock() - t0) / 0.5, 0, 1)
+                blend(f * f * (3 - 2 * f))
+                if f >= 1 then break end
+                RunService.Heartbeat:Wait()
+            end
+        end)
+    end
+end
 
 local function fxPlay(obj, info, props)
     local ok, tw = pcall(function() return TweenService:Create(obj, info, props) end)
@@ -4471,30 +4534,79 @@ local INK2 = Color3.fromRGB(18, 18, 20)
 local FILE = H.cache .. "/settings_" .. H.me .. ".json"
 local MAXMSG = CONFIG.MAX_MESSAGES
 local WHITEC = Color3.new(1, 1, 1)
-local function mk(bg, accA, accB, light)
+local function shade(c, f)
+	local function ch(v) return math.clamp(math.floor(v * 255 * f + 0.5), 0, 255) end
+	return Color3.fromRGB(ch(c.R), ch(c.G), ch(c.B))
+end
+local function mk(bg, accA, accB, o)
 	local t = { bg = bg, accA = accA, accB = accB, text = Color3.fromRGB(244, 244, 244), mut = Color3.fromRGB(160, 160, 160), ov = WHITEC, bgT = 0.12 }
-	if light then for k, v in pairs(light) do t[k] = v end end
+	if o then for k, v in pairs(o) do t[k] = v end end
+	t.cardA = t.cardA or shade(bg, 0.5)
+	t.cardB = t.cardB or shade(bg, 1.8)
+	t.rim = t.rim or (t.neutral and WHITEC or accA)
+	t.shine = t.shine or t.rim
+	t.tri = t.tri or (t.neutral and Color3.fromRGB(239, 68, 68) or accA)
+	t.dim = t.dim or shade(bg, 0.3)
+	if not t.neutral and t.ov == WHITEC then t.ov = WHITEC:Lerp(accA, 0.3) end -- panels pick up a hint of the accent
+	t.tag = t.tag or ""
 	return t
 end
--- Novoline looks: Modern + Fluent are its two neutral dark themes, the rest are its colour tints
--- (Pina blue and the tile colours: orange, red, cyan, purple, green). Accents are bright, so text on them is dark.
+local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
+-- every theme restyles the whole window; the funny ones are marked (fun)
 local THEMES = {
-	Modern  = mk(Color3.fromRGB(16, 16, 16), Color3.fromRGB(242, 242, 244), Color3.fromRGB(196, 196, 202)),
-	Fluent  = mk(Color3.fromRGB(23, 23, 23), Color3.fromRGB(238, 238, 238), Color3.fromRGB(176, 176, 182), { text = Color3.fromRGB(244, 244, 246), mut = Color3.fromRGB(150, 150, 156) }),
-	Pina    = mk(Color3.fromRGB(13, 16, 24), Color3.fromRGB(56, 116, 222),  Color3.fromRGB(96, 160, 255),  { text = Color3.fromRGB(240, 244, 252), mut = Color3.fromRGB(146, 156, 176) }),
-	Ember   = mk(Color3.fromRGB(20, 14, 10), Color3.fromRGB(255, 156, 64),  Color3.fromRGB(255, 200, 130), { text = Color3.fromRGB(250, 244, 238), mut = Color3.fromRGB(170, 154, 140) }),
-	Crimson = mk(Color3.fromRGB(20, 10, 12), Color3.fromRGB(255, 96, 102),  Color3.fromRGB(255, 150, 154), { text = Color3.fromRGB(250, 240, 241), mut = Color3.fromRGB(168, 146, 148) }),
-	Aqua    = mk(Color3.fromRGB(9, 17, 21),  Color3.fromRGB(64, 186, 255),  Color3.fromRGB(130, 214, 255), { text = Color3.fromRGB(238, 248, 252), mut = Color3.fromRGB(140, 164, 176) }),
-	Violet  = mk(Color3.fromRGB(17, 13, 24), Color3.fromRGB(168, 120, 255), Color3.fromRGB(206, 170, 255), { text = Color3.fromRGB(246, 242, 252), mut = Color3.fromRGB(158, 148, 178) }),
-	Mint    = mk(Color3.fromRGB(10, 19, 14), Color3.fromRGB(52, 199, 89),   Color3.fromRGB(140, 228, 160), { text = Color3.fromRGB(240, 250, 243), mut = Color3.fromRGB(140, 168, 148) }),
+	Modern  = mk(rgb(16, 16, 16), rgb(242, 242, 244), rgb(196, 196, 202), { neutral = true, cardA = rgb(8, 8, 9), cardB = rgb(26, 26, 28),
+		tag = "The classic. Clean, dark and neutral." }),
+	Fluent  = mk(rgb(23, 23, 23), rgb(238, 238, 238), rgb(176, 176, 182), { neutral = true, cardA = rgb(14, 14, 15), cardB = rgb(34, 34, 36),
+		text = rgb(244, 244, 246), mut = rgb(150, 150, 156), tag = "A slightly lighter dark." }),
+	Pina    = mk(rgb(13, 16, 24), rgb(56, 117, 222), rgb(96, 160, 255), { text = rgb(240, 244, 252), mut = rgb(146, 156, 176), tag = "Cool blue, straight from Novoline." }),
+	Ember   = mk(rgb(20, 14, 10), rgb(255, 157, 64), rgb(255, 200, 130), { text = rgb(250, 244, 238), mut = rgb(170, 154, 140), tag = "Warm orange glow." }),
+	Crimson = mk(rgb(20, 10, 12), rgb(255, 96, 103), rgb(255, 150, 154), { text = rgb(250, 240, 241), mut = rgb(168, 146, 148), tag = "Red alert." }),
+	Aqua    = mk(rgb(9, 17, 21), rgb(64, 187, 255), rgb(130, 214, 255), { text = rgb(238, 248, 252), mut = rgb(140, 164, 176), tag = "Fresh sky blue." }),
+	Violet  = mk(rgb(17, 13, 24), rgb(168, 121, 255), rgb(206, 170, 255), { text = rgb(246, 242, 252), mut = rgb(158, 148, 178), tag = "Purple haze." }),
+	Mint    = mk(rgb(10, 19, 14), rgb(52, 200, 89), rgb(140, 228, 160), { text = rgb(240, 250, 243), mut = rgb(140, 168, 148), tag = "Fresh and green." }),
+	["Black & Orange"] = mk(rgb(10, 10, 10), rgb(255, 144, 0), rgb(255, 186, 82), { text = rgb(250, 248, 244), mut = rgb(170, 150, 120),
+		tag = "Black and orange. Yes, THAT colour scheme. Don't tell anyone. (fun)" }),
+	Banana  = mk(rgb(14, 13, 6), rgb(255, 214, 10), rgb(255, 235, 120), { text = rgb(252, 250, 236), mut = rgb(170, 164, 110), tag = "Black and yellow. Bzzzz. (fun)" }),
+	Bubblegum = mk(rgb(30, 13, 26), rgb(255, 106, 180), rgb(255, 168, 214), { text = rgb(255, 241, 248), mut = rgb(190, 140, 168), tag = "Pink. Loud and proud. (fun)" }),
+	Matrix  = mk(rgb(3, 12, 6), rgb(0, 255, 102), rgb(120, 255, 176), { text = rgb(196, 255, 214), mut = rgb(70, 150, 92), tag = "Green on black. Wake up, Neo. (fun)" }),
+	Vaporwave = mk(rgb(24, 10, 40), rgb(255, 113, 206), rgb(1, 205, 254), { text = rgb(242, 232, 255), mut = rgb(166, 142, 196), tag = "Neon sunset drive at 3 a.m. (fun)" }),
+	Sunset  = mk(rgb(28, 12, 14), rgb(255, 94, 77), rgb(255, 196, 112), { text = rgb(255, 243, 236), mut = rgb(186, 148, 132), tag = "The sky is on fire." }),
+	Dracula = mk(rgb(31, 32, 44), rgb(189, 147, 249), rgb(255, 121, 198), { text = rgb(248, 248, 242), mut = rgb(138, 146, 178), tag = "Purple and pink for the night shift." }),
+	Nord    = mk(rgb(38, 43, 54), rgb(136, 192, 208), rgb(163, 190, 140), { text = rgb(236, 239, 244), mut = rgb(146, 156, 172), tag = "Calm arctic blues." }),
+	Coffee  = mk(rgb(24, 16, 12), rgb(214, 163, 110), rgb(240, 208, 170), { text = rgb(246, 236, 226), mut = rgb(166, 144, 124), tag = "Brown, warm and fully caffeinated." }),
+	Toxic   = mk(rgb(10, 15, 4), rgb(186, 255, 0), rgb(224, 255, 110), { text = rgb(240, 255, 214), mut = rgb(124, 146, 80), tag = "Radioactive lime. Handle with care. (fun)" }),
+	["Blood Moon"] = mk(rgb(16, 3, 5), rgb(255, 59, 80), rgb(255, 120, 130), { text = rgb(255, 236, 238), mut = rgb(176, 120, 126), tag = "A very red night." }),
+	["Cotton Candy"] = mk(rgb(18, 20, 34), rgb(122, 200, 255), rgb(255, 168, 222), { text = rgb(240, 246, 255), mut = rgb(150, 160, 190), tag = "Sweet blue and pink. (fun)" }),
+	["Rose Gold"] = mk(rgb(26, 15, 17), rgb(240, 168, 158), rgb(255, 214, 204), { text = rgb(255, 242, 238), mut = rgb(180, 146, 142), tag = "Fancy." }),
+	["Ocean Deep"] = mk(rgb(6, 18, 30), rgb(45, 212, 191), rgb(125, 232, 216), { text = rgb(234, 252, 248), mut = rgb(120, 164, 166), tag = "Teal, far below the surface." }),
 }
-local ORDER = { "Modern", "Fluent", "Pina", "Ember", "Crimson", "Aqua", "Violet", "Mint" }
+local ORDER = { "Modern", "Fluent", "Pina", "Ember", "Crimson", "Aqua", "Violet", "Mint", "Black & Orange", "Banana", "Bubblegum", "Matrix",
+	"Vaporwave", "Sunset", "Dracula", "Nord", "Coffee", "Toxic", "Blood Moon", "Cotton Candy", "Rose Gold", "Ocean Deep", "Custom" }
 if T.ov == nil then T.ov = WHITEC end
-local V = { theme = "Modern", anim = true, aura = true, notif = true, guiMul = 1, anchored = true, ox = 0, oy = 0 }
+local V = { theme = "Modern", custom = "#7C5CFF", anim = true, aura = true, notif = true, guiMul = 1, anchored = true, ox = 0, oy = 0 }
+-- Custom theme: one colour in, a whole look out (bright accent, dark tinted background, tinted text)
+local function parseHex(s)
+	s = tostring(s or ""):gsub("[#%s]", "")
+	if #s == 3 then s = s:gsub(".", "%0%0") end
+	if not s:match("^%x%x%x%x%x%x$") then return nil end
+	return Color3.fromRGB(tonumber(s:sub(1, 2), 16), tonumber(s:sub(3, 4), 16), tonumber(s:sub(5, 6), 16))
+end
+local function hexOf(c)
+	return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+end
+local function buildCustom(c)
+	local h, s, v = c:ToHSV()
+	local acc = Color3.fromHSV(h, s, math.max(v, 0.9)) -- always bright enough for the dark text on it (greys stay grey)
+	return mk(Color3.fromHSV(h, math.clamp(s * 0.6, 0, 0.6), 0.09), acc, acc:Lerp(WHITEC, 0.4), {
+		text = Color3.fromHSV(h, math.min(s, 0.06), 0.97), mut = Color3.fromHSV(h, math.min(s, 0.22), 0.66), tag = "Your own colour. Type a hex code below." })
+end
+THEMES.Custom = buildCustom(parseHex(V.custom))
 pcall(function()
 	if isfile and readfile and isfile(FILE) then
 		local d = HttpService:JSONDecode(readfile(FILE))
 		if type(d) == "table" then
+			local cc = type(d.custom) == "string" and parseHex(d.custom)
+			if cc then V.custom = hexOf(cc); THEMES.Custom = buildCustom(cc) end
 			if THEMES[d.theme] and d.theme ~= "Modern" then V.theme = d.theme end
 			if type(d.anim) == "boolean" then V.anim = d.anim end
 			if type(d.aura) == "boolean" then V.aura = d.aura end
@@ -4639,12 +4751,26 @@ toggleRow("Notifications",
 useCat(3)
 local setTheme
 do
-	local text = "Changes the window colours with a smooth fade. Modern is the default and Fluent a slightly lighter dark. Pina, Ember, Crimson, Aqua, Violet and Mint add a colour tint."
+	local text = "Restyles the whole window: cards, dock, panels, text and buttons. Pick a look, or type your own colour at the bottom."
 	local dh = textH(text, 12, WIDE)
-	local c = card(33 + dh + 10 + 78 + 12)
+	local rows = math.ceil(#ORDER / 4)
+	local rowH = rows * 42 - 6
+	local c = card(33 + dh + 10 + rowH + 8 + 18 + 10 + 32 + 14)
 	local y = title(c, "Theme")
 	desc(c, text, y, WIDE)
-	local row = new("Frame", { Position = UDim2.fromOffset(12, y + dh + 10), Size = UDim2.new(1, -24, 0, 78), BackgroundTransparency = 1, Parent = c })
+	local rowY = y + dh + 10
+	local row = new("Frame", { Position = UDim2.fromOffset(12, rowY), Size = UDim2.new(1, -24, 0, rowH), BackgroundTransparency = 1, Parent = c })
+	local tagLbl = new("TextLabel", { Position = UDim2.fromOffset(12, rowY + rowH + 8), Size = UDim2.new(1, -24, 0, 18), BackgroundTransparency = 1,
+		Text = "", Font = T.font, TextSize = 12, TextColor3 = T.mut, TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd, Parent = c })
+	local hexY = rowY + rowH + 8 + 18 + 10
+	new("TextLabel", { Position = UDim2.fromOffset(12, hexY), Size = UDim2.fromOffset(104, 32), BackgroundTransparency = 1, Text = "Custom colour",
+		Font = T.fontB, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = c })
+	local hexBox = new("TextBox", { Position = UDim2.fromOffset(122, hexY), Size = UDim2.fromOffset(100, 32), BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.9, Text = V.custom, PlaceholderText = "#RRGGBB", ClearTextOnFocus = false, Font = T.fontB, TextSize = 13,
+		TextColor3 = T.text, Parent = c }, { corner(10) })
+	local applyBtn = new("TextButton", { Position = UDim2.fromOffset(230, hexY), Size = UDim2.fromOffset(74, 32), BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.86, Text = "Apply", Font = T.fontB, TextSize = 12, TextColor3 = T.text, AutoButtonColor = false, Parent = c }, { corner(10) })
 	local chips = {}
 	local busy = false
 	local function nudge(col) return Color3.new(math.min(1, col.R + 0.002), col.G, col.B) end
@@ -4654,18 +4780,26 @@ do
 			tween(ch.btn, 0.2, { BackgroundTransparency = sel and 0.8 or 0.94 })
 			tween(ch.str, 0.2, { Transparency = sel and 0.35 or 0.92 })
 		end
+		tagLbl.Text = (THEMES[V.theme] and THEMES[V.theme].tag) or ""
 	end
 	-- Theme engine (stateless): every colour is looked up by what it IS right now, so it never depends on which theme was
-	-- active before. A colour that belongs to any theme's palette (bg / accA / accB / text / mut) simply becomes the same
-	-- slot of the new theme; white (or a theme's overlay colour) on see-through surfaces becomes the new overlay colour.
+	-- active before. A colour that belongs to any theme's palette (bg / cardA / accA / accB / text / mut) simply becomes the
+	-- same slot of the new theme; white (or a theme's overlay colour) on see-through surfaces becomes the new overlay colour.
+	-- The window frame, cards, dock and top capsule are restyled by HOST.SetTheme.
 	local function ckey(c) return math.floor(c.R * 255 + 0.5) * 65536 + math.floor(c.G * 255 + 0.5) * 256 + math.floor(c.B * 255 + 0.5) end
 	local WHITEK = 16777215
 	local ROLE, OVSET = {}, {}
-	for _, th in pairs(THEMES) do
-		for _, r in ipairs({ "bg", "accA", "accB", "text", "mut" }) do ROLE[ckey(th[r])] = r end
+	local ROLES = { "bg", "cardA", "accA", "accB", "text", "mut" }
+	local function register(th)
+		for _, r in ipairs(ROLES) do
+			local k = ckey(th[r])
+			if ROLE[k] == nil then ROLE[k] = r end
+		end
 		if ckey(th.ov) ~= WHITEK then OVSET[ckey(th.ov)] = true end
 	end
-	local BG_ROLES = { bg = true, accA = true, accB = true }
+	for _, th in pairs(THEMES) do register(th) end
+	ROLE[ckey(Color3.fromRGB(150, 150, 156))] = ROLE[ckey(Color3.fromRGB(150, 150, 156))] or "mut" -- the muted grey other tabs use
+	local BG_ROLES = { bg = true, cardA = true, accA = true, accB = true }
 	local TX_ROLES = { text = true, mut = true, accA = true, accB = true }
 	local function hasGrad(o) return o:FindFirstChildOfClass("UIGradient") ~= nil end
 	local function bgRole(o)
@@ -4753,24 +4887,33 @@ do
 		if busy or not th then return end
 		busy = true
 		T.bg, T.accA, T.accB, T.text, T.mut, T.ov, T.bgT = th.bg, th.accA, th.accB, th.text, th.mut, th.ov, th.bgT
+		SAIKIUI.text, SAIKIUI.mut, SAIKIUI.ink = th.text, th.mut, th.cardA -- things built later start in the new colours
 		HOST.AccentA = th.accA -- the animated title gradient follows the theme
+		pcall(function() if HOST.SetTheme then HOST.SetTheme(th, instant) end end) -- cards, dock, top capsule, background
 		task.spawn(function()
 			local ok, err = pcall(recolor, th, instant)
 			if not ok then warn("[SAIKI RECHAT] theme change: " .. tostring(err)) end
 			busy = false
 		end)
 	end
-	-- things created later (new chat messages, popups...) get the theme's overlay colour as soon as they appear
-	H.bind(gui.DescendantAdded, function(o)
-		if ckey(T.ov) == WHITEK then return end
-		task.defer(function()
-			if not o.Parent or inButton(o) then return end
-			if o:IsA("GuiObject") then
-				if o.BackgroundColor3 == WHITEC and bgRole(o) == "ov" then o.BackgroundColor3 = T.ov end
-			elseif o:IsA("UIStroke") then
-				if o.Color == WHITEC then o.Color = T.ov end
+	-- things created later (new chat messages, popups, tabs built after a theme change) are put in the current theme straight away
+	local function applyNew(o, th)
+		if not th or not o.Parent or inButton(o) then return end
+		if o:IsA("GuiObject") then
+			local r = bgRole(o)
+			if r and th[r] and ckey(th[r]) ~= ckey(o.BackgroundColor3) then o.BackgroundColor3 = th[r] end
+			if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+				local tr = ROLE[ckey(o.TextColor3)]
+				if tr and TX_ROLES[tr] and ckey(th[tr]) ~= ckey(o.TextColor3) then o.TextColor3 = th[tr] end
 			end
-		end)
+		elseif o:IsA("UIStroke") then
+			local k = ckey(o.Color)
+			if (k == WHITEK or OVSET[k]) and ckey(th.ov) ~= k then o.Color = th.ov end
+		end
+	end
+	H.bind(gui.DescendantAdded, function(o)
+		if V.theme == "Modern" then return end
+		task.defer(function() pcall(applyNew, o, THEMES[V.theme]) end)
 	end)
 	for i, name in ipairs(ORDER) do
 		local th = THEMES[name]
@@ -4780,12 +4923,13 @@ do
 			{ corner(12) })
 		local str = stroke(sel and 0.35 or 0.92)
 		str.Parent = btn
+		local sw = new("UIGradient", { Color = ColorSequence.new(nudge(th.accA), nudge(th.accB)), Rotation = 0 })
 		new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 5), Size = UDim2.fromOffset(26, 8),
-			BackgroundColor3 = WHITE, Parent = btn }, { corner(4),
-			new("UIGradient", { Color = ColorSequence.new(nudge(th.accA), nudge(th.accB)), Rotation = 0 }) })
-		new("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -4), Size = UDim2.new(1, 0, 0, 14),
-			BackgroundTransparency = 1, Text = name, Font = T.fontB, TextSize = 11, TextColor3 = T.text, Parent = btn })
-		chips[name] = { btn = btn, str = str }
+			BackgroundColor3 = WHITE, Parent = btn }, { corner(4), sw })
+		new("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -4), Size = UDim2.new(1, -8, 0, 14),
+			BackgroundTransparency = 1, Text = name, Font = T.fontB, TextSize = 11, TextScaled = true, TextColor3 = T.text, Parent = btn },
+			{ new("UITextSizeConstraint", { MaxTextSize = 11, MinTextSize = 7 }) })
+		chips[name] = { btn = btn, str = str, sw = sw }
 		btn.Activated:Connect(function()
 			if busy or name == V.theme then return end
 			V.theme = name
@@ -4794,6 +4938,26 @@ do
 			setTheme(name)
 		end)
 	end
+	local function applyCustom()
+		local col = parseHex(hexBox.Text)
+		if not col then
+			hexBox.Text = V.custom -- not a colour: put the last good one back
+			return
+		end
+		if busy then return end
+		V.custom = hexOf(col)
+		hexBox.Text = V.custom
+		THEMES.Custom = buildCustom(col)
+		register(THEMES.Custom)
+		chips.Custom.sw.Color = ColorSequence.new(nudge(THEMES.Custom.accA), nudge(THEMES.Custom.accB))
+		V.theme = "Custom"
+		paintChips()
+		save()
+		setTheme("Custom")
+	end
+	applyBtn.Activated:Connect(applyCustom)
+	hexBox.FocusLost:Connect(function(enter) if enter then applyCustom() end end)
+	paintChips()
 end
 
 ---------------------------------------------------------------- GUI size
