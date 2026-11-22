@@ -8478,7 +8478,7 @@ HOST.Run("Trolls", function()
 		paint(name)
 		return a
 	end
-	local FOLLOW = { headsit = true, shouldersit = true, backpack = true, carpet = true, stalk = true, headstand = true }
+	local FOLLOW = { headsit = true, shouldersit = true, backpack = true, carpet = true, stalk = true, headstand = true, annoy = true, attach = true }
 	local function stopFollow(except)
 		for n in pairs(FOLLOW) do if n ~= except then stop(n) end end
 	end
@@ -8578,6 +8578,246 @@ HOST.Run("Trolls", function()
 		end)
 	end
 
+	local Lighting = game:GetService("Lighting")
+
+	local function flingSelf()
+		local char = LP.Character
+		local mr = root(char)
+		if not mr then say("No character.") return end
+		local saved = {}
+		for _, part in ipairs(char:GetDescendants()) do
+			if part:IsA("BasePart") then
+				saved[part] = { part.CustomPhysicalProperties, part.Massless, part.CanCollide }
+				part.CustomPhysicalProperties = PhysicalProperties.new(100, 0.3, 0.5)
+			end
+		end
+		local spin = new("BodyAngularVelocity", { Name = "SaikiFling", AngularVelocity = Vector3.new(0, 99999, 0), MaxTorque = Vector3.new(0, math.huge, 0), P = math.huge }, mr)
+		for _, part in ipairs(char:GetChildren()) do if part:IsA("BasePart") then part.Massless = true end end
+		local a = begin("fling", function()
+			pcall(function() spin:Destroy() end)
+			for part, was in pairs(saved) do
+				if part.Parent then pcall(function() part.CustomPhysicalProperties = was[1] part.Massless = was[2] part.CanCollide = was[3] end) end
+			end
+			local r = root(LP.Character)
+			if r then r.AssemblyLinearVelocity = Vector3.zero r.AssemblyAngularVelocity = Vector3.zero end
+		end)
+		a.conns[#a.conns + 1] = RunService.Stepped:Connect(function()
+			for part in pairs(saved) do if part.Parent then part.CanCollide = false end end
+		end)
+		local flip, acc = false, 0
+		a.conns[#a.conns + 1] = RunService.Heartbeat:Connect(function(dt)
+			acc += dt
+			if acc < 0.15 then return end
+			acc = 0 flip = not flip
+			spin.AngularVelocity = flip and Vector3.new(0, 99999, 0) or Vector3.zero
+		end)
+	end
+
+	local function touchFling()
+		local a = begin("touchfling", nil)
+		task.spawn(function()
+			local dir = 0.1
+			while active.touchfling == a do
+				RunService.Heartbeat:Wait()
+				local mr = root(LP.Character)
+				if mr then
+					local v = mr.AssemblyLinearVelocity
+					mr.AssemblyLinearVelocity = v * 10000 + Vector3.new(0, 10000, 0)
+					RunService.RenderStepped:Wait()
+					mr.AssemblyLinearVelocity = v
+					RunService.Stepped:Wait()
+					mr.AssemblyLinearVelocity = v + Vector3.new(0, dir, 0)
+					dir = -dir
+				end
+			end
+		end)
+	end
+
+	local function loopFling()
+		local p = needTarget()
+		if not p then return end
+		local a = begin("loopfling", function()
+			local r = root(LP.Character)
+			if r then
+				local bv = r:FindFirstChild("SaikiLoopFling")
+				if bv then bv:Destroy() end
+				r.AssemblyLinearVelocity = Vector3.zero r.AssemblyAngularVelocity = Vector3.zero
+			end
+		end)
+		task.spawn(function()
+			while active.loopfling == a do
+				if not p.Parent then stop("loopfling") break end
+				local mr, tr, h = root(LP.Character), root(p.Character), myHum()
+				if mr and tr and h and h.Health > 0 then
+					local home = mr.CFrame
+					local bv = new("BodyVelocity", { Name = "SaikiLoopFling", Velocity = Vector3.new(math.random(-400, 400), math.random(200, 500), math.random(-400, 400)), MaxForce = Vector3.new(1 / 0, 1 / 0, 1 / 0) }, mr)
+					local t0, ang = tick(), 0
+					while active.loopfling == a and tick() - t0 < 2 and tr.Parent and mr.Parent do
+						ang += 100
+						mr.CFrame = CFrame.new(tr.Position) * CFrame.new(0, 1.5, 0) * CFrame.Angles(math.rad(ang), 0, 0)
+						task.wait()
+						mr.CFrame = CFrame.new(tr.Position) * CFrame.new(0, -1.5, 0) * CFrame.Angles(math.rad(ang), 0, 0)
+						task.wait()
+					end
+					bv:Destroy()
+					if mr.Parent then
+						mr.AssemblyLinearVelocity = Vector3.zero mr.AssemblyAngularVelocity = Vector3.zero
+						mr.CFrame = home
+					end
+				end
+				task.wait(0.05)
+			end
+		end)
+	end
+
+	local function helicopter()
+		local hum, mr = myHum(), root(LP.Character)
+		if not (hum and mr) then say("No character.") return end
+		local track, sound
+		pcall(function()
+			local an = new("Animation", { AnimationId = "rbxassetid://129132611803602" })
+			local animator = hum:FindFirstChildOfClass("Animator") or new("Animator", {}, hum)
+			track = animator:LoadAnimation(an)
+			track.Priority = Enum.AnimationPriority.Action4
+			track.Looped = true
+			track:Play(0.1, 1, 1)
+		end)
+		sound = new("Sound", { Name = "SaikiHeli", SoundId = "rbxassetid://99103708154004", Volume = 0.35, Looped = true, RollOffMode = Enum.RollOffMode.InverseTapered }, mr)
+		pcall(function() sound:Play() end)
+		local bv = new("BodyVelocity", { MaxForce = Vector3.new(1e9, 1e9, 1e9), Velocity = Vector3.zero }, mr)
+		local bg = new("BodyGyro", { MaxTorque = Vector3.new(1e9, 1e9, 1e9), P = 9e4, CFrame = mr.CFrame }, mr)
+		hum.PlatformStand = true
+		local a = begin("helicopter", function()
+			pcall(function() bv:Destroy() end)
+			pcall(function() bg:Destroy() end)
+			pcall(function() sound:Stop() sound:Destroy() end)
+			if track then pcall(function() track:Stop(0) end) end
+			local h = myHum()
+			if h then h.PlatformStand = false end
+		end)
+		a.conns[#a.conns + 1] = RunService.Heartbeat:Connect(function()
+			local h, r = myHum(), root(LP.Character)
+			if not (h and r and bv.Parent) then stop("helicopter") return end
+			local cam = workspace.CurrentCamera
+			local v = Vector3.zero
+			local md = h.MoveDirection
+			if md.Magnitude > 0 then
+				local o = cam.CFrame:VectorToObjectSpace(md)
+				v = cam.CFrame.LookVector * (-o.Z) + cam.CFrame.RightVector * o.X
+			end
+			local up = 0
+			if UIS:IsKeyDown(Enum.KeyCode.E) then up += 1 end
+			if UIS:IsKeyDown(Enum.KeyCode.Q) then up -= 1 end
+			bv.Velocity = v * 60 + Vector3.new(0, up * 50, 0)
+			local look = cam.CFrame.LookVector
+			bg.CFrame = CFrame.lookAt(Vector3.zero, Vector3.new(look.X, 0, look.Z) + Vector3.new(0, 0, 1e-4))
+		end)
+		a.conns[#a.conns + 1] = hum.Died:Connect(function() stop("helicopter") end)
+		say("Helicopter on. E / Q = up / down.")
+	end
+
+	local fakeBusy = false
+	local function fakeout()
+		local hum = myHum()
+		local mr = hum and hum.RootPart
+		if not mr then say("No character.") return end
+		if fakeBusy then return end
+		fakeBusy = true
+		task.spawn(function()
+			local cam = workspace.CurrentCamera
+			local oldType, oldH = cam.CameraType, workspace.FallenPartsDestroyHeight
+			cam.CameraType = Enum.CameraType.Fixed
+			workspace.FallenPartsDestroyHeight = -math.huge
+			local saved = mr.CFrame
+			mr.CFrame = saved + Vector3.new(0, -1000, 0)
+			task.wait(0.5)
+			mr.CFrame = saved
+			cam.CameraType = Enum.CameraType.Custom
+			workspace.FallenPartsDestroyHeight = oldH
+			fakeBusy = false
+		end)
+	end
+
+	local function annoy()
+		local p = needTarget()
+		if not p then return end
+		stopFollow("annoy")
+		local a = begin("annoy", nil)
+		task.spawn(function()
+			while active.annoy == a do
+				local tr, mr = root(p.Character), root(LP.Character)
+				if not (p.Parent and tr and mr) then stop("annoy") break end
+				mr.CFrame = CFrame.new(tr.Position + Vector3.new(math.random(-3, 3), math.random(0, 2), math.random(-3, 3)))
+				task.wait(0.05)
+			end
+		end)
+	end
+
+	local function attach()
+		local p = needTarget()
+		if not p then return end
+		local mr, tr = root(LP.Character), root(p.Character)
+		if not (mr and tr) then say("Can't attach right now.") return end
+		stopFollow("attach")
+		local w = new("WeldConstraint", { Part0 = mr, Part1 = tr }, mr)
+		begin("attach", function() pcall(function() w:Destroy() end) end)
+		say("Attached to " .. p.DisplayName .. ".")
+	end
+
+	local function delete(loop)
+		local p = needTarget()
+		if not p then return end
+		local a = begin(loop and "loopdelete" or "delete", function()
+			local c = p.Character
+			if c and c.Parent == Lighting then c.Parent = workspace end
+		end)
+		if p.Character then p.Character.Parent = Lighting end
+		if loop then
+			a.conns[#a.conns + 1] = p.CharacterAdded:Connect(function(c) task.wait() c.Parent = Lighting end)
+		end
+		say("Hid " .. p.DisplayName .. "'s character (only for you).")
+	end
+
+	local function timestop()
+		local function setAnch(v)
+			for _, pl in ipairs(Players:GetPlayers()) do
+				if pl ~= LP and pl.Character then
+					for _, d in ipairs(pl.Character:GetDescendants()) do
+						if d:IsA("BasePart") then d.Anchored = v end
+					end
+				end
+			end
+		end
+		local a = begin("timestop", function() setAnch(false) end)
+		local acc = 1
+		a.conns[#a.conns + 1] = RunService.Heartbeat:Connect(function(dt)
+			acc += dt
+			if acc < 0.2 then return end
+			acc = 0
+			setAnch(true)
+		end)
+	end
+
+	local function hide()
+		local p = needTarget()
+		if not p then return end
+		local a = begin("hide", function()
+			local c = p.Character
+			if c then for _, v in ipairs(c:GetDescendants()) do if v:IsA("BasePart") then v.LocalTransparencyModifier = 0 end end end
+		end)
+		a.conns[#a.conns + 1] = RunService.Heartbeat:Connect(function()
+			local c = p.Character
+			if c then for _, v in ipairs(c:GetDescendants()) do if v:IsA("BasePart") then v.LocalTransparencyModifier = 1 end end end
+		end)
+	end
+
+	local function nilchar()
+		local c = LP.Character
+		if not c then say("No character.") return end
+		c.Parent = nil
+		begin("nilchar", function() if c then c.Parent = workspace end end)
+	end
+
 	local DEFS = {
 		{ "headsit", "Headsit", "Sit on their head", function() follow("headsit", true, nil, CFrame.new(0, 1.6, 0.4)) end },
 		{ "shouldersit", "Shouldersit", "Sit on their shoulder", function() follow("shouldersit", true, nil, CFrame.new(1.5, 1.3, 0)) end },
@@ -8587,9 +8827,21 @@ HOST.Run("Trolls", function()
 		{ "headstand", "Headstand", "Stand on their head", function() follow("headstand", false, nil, CFrame.new(0, 4.6, 0)) end },
 		{ "stare", "Stare", "Face the picked player", function() stare("stare", function() return target end) end },
 		{ "starenear", "Stare closest", "Face whoever is nearest", function() stare("starenear", closest) end },
+		{ "annoy", "Annoy", "Teleport around them", annoy },
+		{ "attach", "Attach", "Weld yourself to them", attach },
+		{ "loopfling", "Loop fling", "Keep flinging them", loopFling },
+		{ "delete", "Delete", "Hide their character (you only)", function() delete(false) end },
+		{ "loopdelete", "Loop delete", "Keep hiding on respawn", function() delete(true) end },
+		{ "hide", "Hide", "Make them invisible (you only)", hide },
 	}
 	local SELFDEFS = {
 		{ "creepy", "Creepy walk", "Creepy walk and run", creepy },
+		{ "helicopter", "Helicopter", "Fly while spinning", helicopter },
+		{ "fling", "Fling", "Spin-fling by touching", flingSelf },
+		{ "touchfling", "Touch fling", "Fling on touch", touchFling },
+		{ "timestop", "Timestop", "Freeze everyone else", timestop },
+		{ "nilchar", "Nil character", "Nil your character", nilchar },
+		{ "fakeout", "Fakeout", "Void yourself, snap back", fakeout, "action" },
 	}
 
 	------------------------------------------------------------ target card
@@ -8658,7 +8910,7 @@ HOST.Run("Trolls", function()
 			local sub = txt(btn, d[3], 11, false, MUT, { Position = UDim2.fromOffset(14, 32), Size = UDim2.new(1, -28, 0, 28) , TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
 			tiles[d[1]] = { btn = btn, title = title, sub = sub }
 			btn.Activated:Connect(function()
-				if active[d[1]] then stop(d[1]) else d[4]() end
+				if d[5] == "action" then d[4]() elseif active[d[1]] then stop(d[1]) else d[4]() end
 			end)
 		end
 	end
