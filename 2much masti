@@ -293,7 +293,7 @@ local CARD_R = {
     SetCategories = 28, SetMain = 18, SetQuick = 26, SetSupport = 30,
     GfxCategories = 28, GfxMain = 18, GfxQuick = 26, GfxFps = 30,
     SkyList = 20, SkyDetail = 28, SkyAdjust = 22,
-    TrollTarget = 24, TrollMain = 24, TrollSelf = 24,
+    TrollNow = 26, TrollTarget = 24, TrollMain = 24, TrollSelf = 24, TrollHelp = 24, TrollStop = 24, TrollSmoke = 26,
     MusicMode = 22, MusicNowPlaying = 24, MusicQueue = 18, MusicLibrary = 18, MusicSave = 26, MusicPlayback = 26, MusicSearchKey = 22,
 }
 
@@ -8404,20 +8404,29 @@ circle.Visible = false
 
 end)
 
---==================== TROLLS MODULE (ported from Novoline, a selection) ====================
--- Headsit, Shouldersit, Backpack, Carpet, Stalk, Headstand, Stare, Stare Closest, Creepy Walk.
--- Sitting ones stop when you jump. "Stop all" turns everything off.
+--==================== TROLLS MODULE (ported from Novoline) ====================
+-- Page layout (Novoline-style card collage):
+--   left   : "Target" island (live avatar, distance, HP) + player list
+--   middle : trolls that need a target, with category filters
+--   right  : solo trolls, a short how-to card and a Stop everything pill
+-- Sitting trolls also stop when you jump.
 HOST.Run("Trolls", function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
 	local UIS = game:GetService("UserInputService")
+	local TweenService = game:GetService("TweenService")
 	local LP = Players.LocalPlayer
 	local SEC = 5
 	local TXT, MUT = SAIKIUI.text, SAIKIUI.mut
 	local WHITE = Color3.new(1, 1, 1)
 	local INK = Color3.fromRGB(18, 18, 20)
-	local LEFT = Enum.TextXAlignment.Left
+	local SOFT_INK = Color3.fromRGB(78, 78, 86)
+	local RED = Color3.fromRGB(255, 92, 92)
+	local ORANGE = Color3.fromRGB(255, 170, 64)
+	local GREEN = Color3.fromRGB(78, 229, 154)
+	local LEFT, CENTER = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center
 
+	local themed = {}
 	local function new(class, props, parent)
 		local o = Instance.new(class)
 		for k, v in pairs(props or {}) do o[k] = v end
@@ -8425,43 +8434,57 @@ HOST.Run("Trolls", function()
 		return o
 	end
 	local function rc(o, r) new("UICorner", { CornerRadius = UDim.new(0, r) }, o) return o end
-	local function line(o) new("UIStroke", { Color = WHITE, Transparency = 0.92, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o) end
-	local function txt(parent, text, size, bold, color, props)
-		local l = new("TextLabel", { BackgroundTransparency = 1, Text = text, TextSize = size, TextColor3 = color, TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd }, parent)
+	local function line(o, tr)
+		return new("UIStroke", { Color = WHITE, Transparency = tr or 0.92, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
+	end
+	-- kind: "t" (text colour), "m" (muted colour) or a Color3; "t"/"m" follow the theme picker
+	local function txt(parent, text, size, bold, kind, props)
+		local isC = typeof(kind) == "Color3"
+		local l = new("TextLabel", { BackgroundTransparency = 1, Text = text, TextSize = size, TextColor3 = isC and kind or (kind == "m" and MUT or TXT), TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd }, parent)
 		for k, v in pairs(props or {}) do l[k] = v end
 		styleText(l, bold)
+		if not isC then themed[#themed + 1] = { l, kind } end
 		return l
 	end
-
 	local function root(c) return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso")) end
 	local function myHum() local c = LP.Character return c and c:FindFirstChildOfClass("Humanoid") end
+	local function thumbUrl(uid) return ("rbxthumb://type=AvatarHeadShot&id=%d&w=100&h=100"):format(uid) end
 
-	------------------------------------------------------------ cards
-	local cA, cB, cC = HOST.Column(SEC, 240), HOST.Column(SEC, 360), HOST.Column(SEC, 240)
+	------------------------------------------------------------ cards (the collage)
+	local cA, cB, cC, cD = HOST.Column(SEC, 280), HOST.Column(SEC, 400), HOST.Column(SEC, 270), HOST.Column(SEC, 300)
+	local stNow = cA.Card(118, "TrollNow")
 	local stTarget = cA.Card(nil, "TrollTarget")
 	local stMain = cB.Card(nil, "TrollMain")
 	local stSelf = cC.Card(nil, "TrollSelf")
+	local stHelp = cC.Card(116, "TrollHelp")
+	local stStop = cC.Card(48, "TrollStop")
+	local stSmoke = cD.Card(236, "TrollSmoke")
 
 	------------------------------------------------------------ state
 	local target
 	local active, tiles = {}, {}
-	local statusLbl, targetLbl
-	local statusToken = 0
-	local function say(msg)
-		if not statusLbl then return end
-		statusToken += 1
-		local my = statusToken
-		statusLbl.Text = msg
-		task.delay(3, function() if my == statusToken then statusLbl.Text = "Jump to get off a player." end end)
-	end
+	local hintLbl, ringStroke
+	local hintToken = 0
+	local refreshNow, paintAll, paintTile, defaultHint
 
-	local function paint(name)
-		local t = tiles[name]
-		if not t then return end
-		local on = active[name] ~= nil
-		t.btn.BackgroundTransparency = on and 0 or 0.94
-		t.title.TextColor3 = on and INK or TXT
-		t.sub.TextColor3 = on and Color3.fromRGB(70, 70, 76) or MUT
+	local function say(msg)
+		if not hintLbl then return end
+		hintToken += 1
+		local my = hintToken
+		hintLbl.Text = msg
+		hintLbl.TextColor3 = ORANGE
+		task.delay(3, function()
+			if my == hintToken and hintLbl then
+				hintLbl.Text = defaultHint()
+				hintLbl.TextColor3 = MUT
+			end
+		end)
+	end
+	local function pulse()
+		if not ringStroke then return end
+		ringStroke.Color = RED
+		ringStroke.Transparency = 0.1
+		TweenService:Create(ringStroke, TweenInfo.new(0.7), { Color = WHITE, Transparency = 0.75 }):Play()
 	end
 	local function stop(name)
 		local a = active[name]
@@ -8469,13 +8492,15 @@ HOST.Run("Trolls", function()
 		active[name] = nil
 		for _, c in ipairs(a.conns) do pcall(function() c:Disconnect() end) end
 		if a.undo then pcall(a.undo) end
-		paint(name)
+		paintTile(name)
+		if refreshNow then refreshNow() end
 	end
 	local function begin(name, undo)
 		stop(name)
 		local a = { conns = {}, undo = undo }
 		active[name] = a
-		paint(name)
+		paintTile(name)
+		if refreshNow then refreshNow() end
 		return a
 	end
 	local FOLLOW = { headsit = true, shouldersit = true, backpack = true, carpet = true, stalk = true, headstand = true, annoy = true, attach = true }
@@ -8485,10 +8510,13 @@ HOST.Run("Trolls", function()
 	local function stopAll()
 		for n in pairs(active) do stop(n) end
 	end
-
 	local function needTarget()
 		local p = target
-		if not p or p == LP or not p.Parent then say("Pick a player first.") return nil end
+		if not p or p == LP or not p.Parent then
+			say("Pick a player first (left side).")
+			pulse()
+			return nil
+		end
 		return p
 	end
 
@@ -8818,116 +8846,437 @@ HOST.Run("Trolls", function()
 		begin("nilchar", function() if c then c.Parent = workspace end end)
 	end
 
+
+	-- Smoke: realistic puffs (drag in, hold, exhale, then rest a few seconds) instead of a constant stream.
+	-- Only you see the particles (they live on your own client).
+	local smokePace = "Normal"
+	local PACES = {
+		Chill = { exhale = { 3.0, 4.5 }, rest = { 4.0, 7.0 } },
+		Normal = { exhale = { 2.2, 3.2 }, rest = { 2.0, 4.0 } },
+		Chain = { exhale = { 1.8, 2.5 }, rest = { 1.0, 2.0 } },
+	}
+	local function smokeStatus(text)
+		local t = tiles.smoke
+		if t and active.smoke then t.sub.Text = text end
+	end
+	local function smoke()
+		local head = LP.Character and LP.Character:FindFirstChild("Head")
+		if not head then say("No character.") return end
+		local old = head:FindFirstChild("SaikiSmoke")
+		if old then old:Destroy() end
+		local attach = new("Attachment", { Name = "SaikiSmoke", Position = Vector3.new(0, -0.45, -0.6) }, head)
+		local em = new("ParticleEmitter", {
+			Texture = "rbxasset://textures/particles/smoke_main.dds",
+			Color = ColorSequence.new(Color3.fromRGB(235, 235, 235)),
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.6, 0.78), NumberSequenceKeypoint.new(1, 1) }),
+			Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 2.6) }),
+			Rate = 0, Lifetime = NumberRange.new(1.4, 2.2), Speed = NumberRange.new(1.5, 3),
+			SpreadAngle = Vector2.new(18, 18), Acceleration = Vector3.new(0, 1.6, 0), Drag = 1.5,
+			RotSpeed = NumberRange.new(-30, 30), Rotation = NumberRange.new(0, 360),
+			EmissionDirection = Enum.NormalId.Front,
+		}, attach)
+		local a = begin("smoke", function() pcall(function() attach:Destroy() end) end)
+		local function nap(sec)
+			local t = tick()
+			while active.smoke == a and tick() - t < sec do task.wait(0.1) end
+			return active.smoke == a
+		end
+		task.spawn(function()
+			while active.smoke == a do
+				if not attach.Parent then stop("smoke") break end
+				local P = PACES[smokePace] or PACES.Normal
+				smokeStatus("Inhaling...")
+				if not nap(1.0 + math.random() * 0.6) then break end
+				smokeStatus("Holding it in...")
+				if not nap(0.6 + math.random() * 0.6) then break end
+				-- exhale: a soft burst, then a stream that thins out
+				smokeStatus("Exhaling...")
+				local dur = P.exhale[1] + math.random() * (P.exhale[2] - P.exhale[1])
+				pcall(function() em:Emit(8) end)
+				local t0 = tick()
+				while active.smoke == a do
+					local t = tick() - t0
+					if t >= dur then break end
+					em.Rate = 4 + 42 * (1 - t / dur) ^ 0.8
+					RunService.Heartbeat:Wait()
+				end
+				em.Rate = 0
+				if active.smoke ~= a then break end
+				local rest = P.rest[1] + math.random() * (P.rest[2] - P.rest[1])
+				smokeStatus(string.format("Resting (%ds)", math.ceil(rest)))
+				if not nap(rest) then break end
+			end
+		end)
+	end
+
+	------------------------------------------------------------ the list of trolls
+	-- cat: Ride / Follow / Fling / Hide (need a target) or Solo (no target).  needs = true when a target is required.
+	local TINT = {
+		Ride = Color3.fromRGB(255, 150, 50), Follow = Color3.fromRGB(88, 166, 255), Fling = Color3.fromRGB(255, 96, 102),
+		Hide = Color3.fromRGB(168, 120, 255), Solo = Color3.fromRGB(52, 199, 89),
+	}
 	local DEFS = {
-		{ "headsit", "Headsit", "Sit on their head", function() follow("headsit", true, nil, CFrame.new(0, 1.6, 0.4)) end },
-		{ "shouldersit", "Shouldersit", "Sit on their shoulder", function() follow("shouldersit", true, nil, CFrame.new(1.5, 1.3, 0)) end },
-		{ "backpack", "Backpack", "Ride on their back", function() follow("backpack", true, nil, CFrame.new(0, -0.3, 1) * CFrame.Angles(0, math.pi, 0)) end },
-		{ "carpet", "Carpet", "Lie under them", function() follow("carpet", false, "282574440", CFrame.new()) end },
-		{ "stalk", "Stalk", "Follow them close", function() follow("stalk", false, nil, CFrame.new(-3, 0, 5)) end },
-		{ "headstand", "Headstand", "Stand on their head", function() follow("headstand", false, nil, CFrame.new(0, 4.6, 0)) end },
-		{ "stare", "Stare", "Face the picked player", function() stare("stare", function() return target end) end },
-		{ "starenear", "Stare closest", "Face whoever is nearest", function() stare("starenear", closest) end },
-		{ "annoy", "Annoy", "Teleport around them", annoy },
-		{ "attach", "Attach", "Weld yourself to them", attach },
-		{ "loopfling", "Loop fling", "Keep flinging them", loopFling },
-		{ "delete", "Delete", "Hide their character (you only)", function() delete(false) end },
-		{ "loopdelete", "Loop delete", "Keep hiding on respawn", function() delete(true) end },
-		{ "hide", "Hide", "Make them invisible (you only)", hide },
+		{ id = "headsit", title = "Headsit", sub = "Sit on their head", cat = "Ride", glyph = "🎩", needs = true, fn = function() follow("headsit", true, nil, CFrame.new(0, 1.6, 0.4)) end },
+		{ id = "shouldersit", title = "Shouldersit", sub = "Sit on their shoulder", cat = "Ride", glyph = "🦜", needs = true, fn = function() follow("shouldersit", true, nil, CFrame.new(1.5, 1.3, 0)) end },
+		{ id = "backpack", title = "Backpack", sub = "Ride on their back", cat = "Ride", glyph = "🎒", needs = true, fn = function() follow("backpack", true, nil, CFrame.new(0, -0.3, 1) * CFrame.Angles(0, math.pi, 0)) end },
+		{ id = "carpet", title = "Carpet", sub = "Lie under them", cat = "Ride", glyph = "🧵", needs = true, fn = function() follow("carpet", false, "282574440", CFrame.new()) end },
+		{ id = "headstand", title = "Headstand", sub = "Stand on their head", cat = "Ride", glyph = "🤸", needs = true, fn = function() follow("headstand", false, nil, CFrame.new(0, 4.6, 0)) end },
+		{ id = "stalk", title = "Stalk", sub = "Follow them close", cat = "Follow", glyph = "👣", needs = true, fn = function() follow("stalk", false, nil, CFrame.new(-3, 0, 5)) end },
+		{ id = "annoy", title = "Annoy", sub = "Teleport around them", cat = "Follow", glyph = "🐝", needs = true, fn = annoy },
+		{ id = "attach", title = "Attach", sub = "Weld yourself to them", cat = "Follow", glyph = "🧲", needs = true, fn = attach },
+		{ id = "stare", title = "Stare", sub = "Always face them", cat = "Follow", glyph = "👀", needs = true, fn = function() stare("stare", function() return target end) end },
+		{ id = "loopfling", title = "Loop fling", sub = "Keep flinging them", cat = "Fling", glyph = "🌀", needs = true, fn = loopFling },
+		{ id = "delete", title = "Delete", sub = "Hide their character (you only)", cat = "Hide", glyph = "🗑", needs = true, fn = function() delete(false) end },
+		{ id = "loopdelete", title = "Loop delete", sub = "Keep hiding on respawn", cat = "Hide", glyph = "♻", needs = true, fn = function() delete(true) end },
+		{ id = "hide", title = "Hide", sub = "Make them invisible (you only)", cat = "Hide", glyph = "👻", needs = true, fn = hide },
+		-- solo
+		{ id = "starenear", title = "Stare closest", sub = "Face whoever is nearest", cat = "Solo", glyph = "👁", fn = function() stare("starenear", closest) end },
+		{ id = "creepy", title = "Creepy walk", sub = "Creepy walk and run", cat = "Solo", glyph = "🕷", fn = creepy },
+		{ id = "helicopter", title = "Helicopter", sub = "Fly while spinning (E / Q)", cat = "Solo", glyph = "🚁", fn = helicopter },
+		{ id = "fling", title = "Fling", sub = "Spin-fling by touching", cat = "Solo", glyph = "💫", fn = flingSelf },
+		{ id = "touchfling", title = "Touch fling", sub = "Fling on touch", cat = "Solo", glyph = "👋", fn = touchFling },
+		{ id = "timestop", title = "Timestop", sub = "Freeze everyone else", cat = "Solo", glyph = "⏳", fn = timestop },
+		{ id = "nilchar", title = "Nil character", sub = "Nil your character", cat = "Solo", glyph = "🕳", fn = nilchar },
+		{ id = "fakeout", title = "Fakeout", sub = "Void yourself, snap back", cat = "Solo", glyph = "🎭", fn = fakeout, action = true },
 	}
-	local SELFDEFS = {
-		{ "creepy", "Creepy walk", "Creepy walk and run", creepy },
-		{ "helicopter", "Helicopter", "Fly while spinning", helicopter },
-		{ "fling", "Fling", "Spin-fling by touching", flingSelf },
-		{ "touchfling", "Touch fling", "Fling on touch", touchFling },
-		{ "timestop", "Timestop", "Freeze everyone else", timestop },
-		{ "nilchar", "Nil character", "Nil your character", nilchar },
-		{ "fakeout", "Fakeout", "Void yourself, snap back", fakeout, "action" },
+	local LEAD = {
+		headsit = "Sitting on", shouldersit = "On the shoulder of", backpack = "Riding", carpet = "Under", headstand = "Standing on",
+		stalk = "Stalking", annoy = "Annoying", attach = "Attached to", stare = "Staring at", loopfling = "Flinging",
+		delete = "Hiding", loopdelete = "Hiding", hide = "Hiding",
 	}
+	local LEAD_ORDER = { "headsit", "shouldersit", "backpack", "carpet", "headstand", "stalk", "annoy", "attach", "stare", "loopfling", "delete", "loopdelete", "hide" }
 
-	------------------------------------------------------------ target card
-	txt(stTarget, "Target", 14, true, TXT, { Position = UDim2.fromOffset(14, 11), Size = UDim2.new(1, -28, 0, 18) })
-	local search = new("TextBox", { Position = UDim2.fromOffset(12, 38), Size = UDim2.new(1, -24, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, Text = "", PlaceholderText = "Search players", PlaceholderColor3 = MUT, TextColor3 = TXT, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = LEFT }, stTarget)
-	styleText(search, false)
-	rc(search, 15) line(search)
-	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, search)
+	------------------------------------------------------------ small widgets
+	local function badge(parent, n, x, y)
+		local b = new("Frame", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, parent)
+		rc(b, 11)
+		local l = new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = tostring(n), TextSize = 12, TextColor3 = INK }, b)
+		styleText(l, true)
+		return b
+	end
+	local function header(stage, n, title, sub)
+		if n then badge(stage, n, 14, 13) end
+		txt(stage, title, 15, true, "t", { Position = UDim2.fromOffset(n and 44 or 14, 10), Size = UDim2.new(1, -(n and 58 or 28), 0, 18) })
+		return txt(stage, sub or "", 11, false, "m", { Position = UDim2.fromOffset(n and 44 or 14, 28), Size = UDim2.new(1, -(n and 58 or 28), 0, 14) })
+	end
+	local function pill(parent, text, props)
+		local b = new("TextButton", { Text = text, TextSize = 11, AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, TextColor3 = TXT }, parent)
+		for k, v in pairs(props or {}) do b[k] = v end
+		styleText(b, true) rc(b, 999) line(b)
+		themed[#themed + 1] = { b, "t" }
+		return b
+	end
 
-	local list = new("ScrollingFrame", { Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 1, -170), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, stTarget)
-	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 6) }, list)
+	------------------------------------------------------------ 1. target island (live)
+	local ring = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(64, 64), BackgroundColor3 = WHITE, BackgroundTransparency = 0.92, BorderSizePixel = 0 }, stNow)
+	rc(ring, 32)
+	ringStroke = new("UIStroke", { Color = WHITE, Transparency = 0.75, Thickness = 2 }, ring)
+	local thumb = new("ImageLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, ScaleType = Enum.ScaleType.Crop }, ring)
+	rc(thumb, 32)
+	local qLbl = txt(ring, "?", 26, true, "m", { Size = UDim2.fromScale(1, 1), TextXAlignment = CENTER })
+	local leadLbl = txt(stNow, "TARGET", 10, true, "m", { Position = UDim2.fromOffset(92, 14), Size = UDim2.new(1, -150, 0, 12) })
+	local nameLbl = txt(stNow, "Nobody picked", 17, true, "t", { Position = UDim2.fromOffset(92, 28), Size = UDim2.new(1, -106, 0, 22) })
+	local subLbl = txt(stNow, "Tap a player below", 11, false, "m", { Position = UDim2.fromOffset(92, 51), Size = UDim2.new(1, -106, 0, 14) })
+	local meterBg = new("Frame", { Position = UDim2.fromOffset(92, 71), Size = UDim2.new(1, -106, 0, 5), BackgroundColor3 = WHITE, BackgroundTransparency = 0.9, BorderSizePixel = 0, Visible = false }, stNow)
+	rc(meterBg, 3)
+	local meterFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = GREEN, BorderSizePixel = 0 }, meterBg)
+	rc(meterFill, 3)
+	local clearBtn = pill(stNow, "Clear", { Position = UDim2.new(1, -58, 0, 12), Size = UDim2.fromOffset(46, 20), Visible = false })
+	hintLbl = txt(stNow, "", 11, false, "m", { Position = UDim2.fromOffset(14, 92), Size = UDim2.new(1, -28, 0, 16) })
+
+	local function tint(k)
+		if k >= 0.6 then return ORANGE:Lerp(GREEN, math.min((k - 0.6) / 0.2, 1)) end
+		if k >= 0.3 then return RED:Lerp(ORANGE, (k - 0.3) / 0.3) end
+		return RED
+	end
+	local function stats(p)
+		local c = p.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if not h or h.Health <= 0 then return "Waiting for respawn", 0 end
+		local k = 1
+		if h.MaxHealth > 0 and h.MaxHealth < 1e9 then k = math.clamp(h.Health / h.MaxHealth, 0, 1) end
+		local parts = {}
+		local mr, tr = root(LP.Character), root(c)
+		if mr and tr then
+			local d = math.floor((mr.Position - tr.Position).Magnitude + 0.5)
+			parts[1] = d .. (d == 1 and " stud" or " studs")
+		end
+		if h.Health < 1e9 then parts[#parts + 1] = math.ceil(h.Health) .. " HP" end
+		return table.concat(parts, "  ·  "), k
+	end
+
+	local mainSub
+	local setTarget, paintRows
+	function defaultHint()
+		if target then return "Now tap a troll on the right →" end
+		return "Tap a player below, then pick a troll →"
+	end
+	local shownUid
+	function refreshNow()
+		if target and not target.Parent then target = nil end
+		local lead = "TARGET"
+		for _, id in ipairs(LEAD_ORDER) do
+			if active[id] then lead = string.upper(LEAD[id]) break end
+		end
+		leadLbl.Text = lead
+		if target then
+			if shownUid ~= target.UserId then shownUid = target.UserId thumb.Image = thumbUrl(target.UserId) end
+			thumb.Visible, qLbl.Visible = true, false
+			nameLbl.Text = target.DisplayName
+			local s, k = stats(target)
+			subLbl.Text = s
+			meterFill.Size = UDim2.fromScale(math.max(k, 0.02), 1)
+			meterFill.BackgroundColor3 = tint(k)
+			meterBg.Visible, clearBtn.Visible = true, true
+		else
+			shownUid = nil
+			thumb.Visible, qLbl.Visible = false, true
+			nameLbl.Text = "Nobody picked"
+			subLbl.Text = "Tap a player below"
+			meterBg.Visible, clearBtn.Visible = false, false
+		end
+		if mainSub then mainSub.Text = target and ("Target: " .. target.DisplayName) or "Pick a target on the left first" end
+		if hintLbl and hintLbl.TextColor3 == MUT then hintLbl.Text = defaultHint() end
+	end
+	function setTarget(p)
+		target = p
+		if not p then stopFollow() stop("stare") stop("loopfling") stop("delete") stop("loopdelete") stop("hide") end
+		refreshNow()
+		if paintRows then paintRows() end
+		paintAll()
+	end
+	clearBtn.Activated:Connect(function() setTarget(nil) end)
+
+	------------------------------------------------------------ 1b. player list
+	local closeBtn = pill(stTarget, "Closest", { Position = UDim2.new(1, -78, 0, 11), Size = UDim2.fromOffset(64, 24), TextSize = 11 })
+	header(stTarget, 1, "Choose a target", "Tap a player, tap again to unpick")
+	local search = new("TextBox", { Position = UDim2.fromOffset(12, 50), Size = UDim2.new(1, -24, 0, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, Text = "", PlaceholderText = "Search players", PlaceholderColor3 = MUT, TextColor3 = TXT, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = LEFT }, stTarget)
+	styleText(search, false) rc(search, 15) line(search)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 12) }, search)
+	local list = new("ScrollingFrame", { Position = UDim2.fromOffset(0, 88), Size = UDim2.new(1, 0, 1, -88), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, stTarget)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 10) }, list)
 	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 
-	targetLbl = txt(stTarget, "No target yet", 11, false, MUT, { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -86), Size = UDim2.new(1, -28, 0, 14) })
-	local closeBtn = new("TextButton", { Text = "Pick closest", TextSize = 12, AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0, TextColor3 = TXT, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -48), Size = UDim2.new(1, -24, 0, 32) }, stTarget)
-	styleText(closeBtn, true) rc(closeBtn, 16) line(closeBtn)
-	statusLbl = txt(stTarget, "Jump to get off a player.", 11, false, MUT, { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -14), Size = UDim2.new(1, -28, 0, 28), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
-
-	local function setTarget(p)
-		target = p
-		targetLbl.Text = p and ("Target: " .. p.DisplayName) or "No target yet"
+	local rows = {}
+	local function dist(p)
+		local mr, tr = root(LP.Character), root(p.Character)
+		if mr and tr then return (mr.Position - tr.Position).Magnitude end
+		return math.huge
 	end
-	local rebuild
-	function rebuild()
-		for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-		if target and not target.Parent then setTarget(nil) stopFollow() stop("stare") end
+	function paintRows()
+		for p, r in pairs(rows) do
+			local sel = (p == target)
+			r.btn.BackgroundTransparency = sel and 0 or 0.94
+			r.name.TextColor3 = sel and INK or TXT
+			r.user.TextColor3 = sel and SOFT_INK or MUT
+			r.dist.TextColor3 = sel and SOFT_INK or MUT
+			r.check.Visible = sel
+		end
+	end
+	local function updateDist()
+		for p, r in pairs(rows) do
+			local d = dist(p)
+			r.dist.Text = d == math.huge and "" or (math.floor(d + 0.5) .. " st")
+		end
+	end
+	local function rebuild()
+		for _, c in ipairs(list:GetChildren()) do if c:IsA("GuiObject") then c:Destroy() end end
+		table.clear(rows)
+		if target and not target.Parent then target = nil refreshNow() paintAll() end
 		local q = string.lower(search.Text or "")
-		local n = 0
+		local pls = {}
 		for _, p in ipairs(Players:GetPlayers()) do
 			if p ~= LP then
-				local nm = p.DisplayName .. "  @" .. p.Name
-				if q == "" or string.find(string.lower(nm), q, 1, true) then
-					n += 1
-					local sel = (p == target)
-					local b = new("TextButton", { Name = p.Name, LayoutOrder = n, Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = WHITE, BackgroundTransparency = sel and 0 or 0.94, AutoButtonColor = false, Text = nm, TextSize = 12, TextColor3 = sel and INK or TXT, TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd, BorderSizePixel = 0 }, list)
-					styleText(b, true) rc(b, 12)
-					new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 10) }, b)
-					b.Activated:Connect(function() setTarget(p) rebuild() end)
-				end
+				local nm = string.lower(p.DisplayName .. " " .. p.Name)
+				if q == "" or string.find(nm, q, 1, true) then pls[#pls + 1] = { p, dist(p) } end
 			end
 		end
-		if n == 0 then
-			local e = new("TextButton", { Name = "Empty", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Text = "No other players.", TextSize = 12, TextColor3 = MUT, AutoButtonColor = false, Active = false }, list)
-			styleText(e, false)
+		table.sort(pls, function(a, b) if a[2] ~= b[2] then return a[2] < b[2] end return a[1].UserId < b[1].UserId end)
+		for i, e in ipairs(pls) do
+			local p = e[1]
+			local btn = new("TextButton", { Name = p.Name, LayoutOrder = i, Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, AutoButtonColor = false, Text = "", BorderSizePixel = 0 }, list)
+			rc(btn, 16)
+			local av = new("ImageLabel", { Position = UDim2.fromOffset(7, 7), Size = UDim2.fromOffset(30, 30), BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, Image = thumbUrl(p.UserId), BorderSizePixel = 0 }, btn)
+			rc(av, 15)
+			local name = txt(btn, p.DisplayName, 13, true, "t", { Position = UDim2.fromOffset(46, 6), Size = UDim2.new(1, -112, 0, 16) })
+			local user = txt(btn, "@" .. p.Name, 11, false, "m", { Position = UDim2.fromOffset(46, 23), Size = UDim2.new(1, -112, 0, 14) })
+			local dl = txt(btn, "", 11, false, "m", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 6), Size = UDim2.fromOffset(54, 14), TextXAlignment = Enum.TextXAlignment.Right })
+			local ck = txt(btn, "✓", 14, true, INK, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 22), Size = UDim2.fromOffset(20, 16), TextXAlignment = Enum.TextXAlignment.Right, Visible = false })
+			rows[p] = { btn = btn, name = name, user = user, dist = dl, check = ck }
+			btn.Activated:Connect(function() setTarget(target == p and nil or p) end)
 		end
+		if #pls == 0 then
+			local e = txt(list, #Players:GetPlayers() <= 1 and "You're alone in this server." or "No players match.", 12, false, "m", { Size = UDim2.new(1, 0, 0, 30), TextXAlignment = CENTER })
+			e.LayoutOrder = 1
+		end
+		paintRows()
+		updateDist()
 	end
 	search:GetPropertyChangedSignal("Text"):Connect(rebuild)
 	closeBtn.Activated:Connect(function()
 		local p = closest()
-		if p then setTarget(p) rebuild() else say("No one nearby.") end
+		if p then setTarget(p) else say("No one nearby.") end
 	end)
-	Players.PlayerAdded:Connect(rebuild)
-	Players.PlayerRemoving:Connect(function() task.defer(rebuild) end)
-	rebuild()
+	Players.PlayerAdded:Connect(function() task.defer(rebuild) end)
+	Players.PlayerRemoving:Connect(function(p)
+		if p == target then target = nil task.defer(function() refreshNow() paintAll() end) end
+		task.defer(rebuild)
+	end)
 
 	------------------------------------------------------------ tiles
-	local function buildTiles(parent, defs, y0, cellH)
-		txt(parent, parent == stMain and "Trolls" or "On yourself", 14, true, TXT, { Position = UDim2.fromOffset(14, 11), Size = UDim2.new(1, -28, 0, 18) })
-		local sc = new("ScrollingFrame", { Position = UDim2.fromOffset(0, y0), Size = UDim2.new(1, 0, 1, -y0 - (parent == stSelf and 56 or 0)), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, parent)
+	local filter = "All"
+	local function buildTile(parent, d, cellH)
+		local btn = new("TextButton", { Name = d.id, Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, parent)
+		rc(btn, 18) line(btn)
+		local cv = cellH - 20
+		local cover = new("Frame", { Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(cv, cv), BackgroundColor3 = TINT[d.cat], BorderSizePixel = 0 }, btn)
+		rc(cover, 14)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(0.05, 0.45) }, cover)
+		local gl = new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = d.glyph, TextSize = math.floor(cv * 0.5), TextColor3 = WHITE }, cover)
+		styleText(gl, true)
+		local title = txt(btn, d.title, 13, true, "t", { Position = UDim2.fromOffset(cv + 20, 10), Size = UDim2.new(1, -(cv + 62), 0, 16) })
+		local sub = txt(btn, d.sub, 11, false, "m", { Position = UDim2.fromOffset(cv + 20, 28), Size = UDim2.new(1, -(cv + 30), 0, cellH - 34), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+		local chip = new("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -9, 0, 9), Size = UDim2.fromOffset(30, 16), BackgroundColor3 = INK, BackgroundTransparency = 0, Text = "ON", TextSize = 10, TextColor3 = WHITE, Visible = false, BorderSizePixel = 0 }, btn)
+		styleText(chip, true) rc(chip, 8)
+		tiles[d.id] = { btn = btn, title = title, sub = sub, chip = chip, cover = cover, gl = gl, def = d }
+		btn.Activated:Connect(function()
+			if d.action then d.fn() return end
+			if active[d.id] then stop(d.id) else d.fn() end
+		end)
+	end
+	function paintTile(id)
+		local t = tiles[id]
+		if not t then return end
+		local d = t.def
+		local on = active[id] ~= nil
+		local locked = d.needs and not target and not on
+		t.btn.BackgroundTransparency = on and 0 or 0.94
+		t.title.TextColor3 = on and INK or (locked and MUT or TXT)
+		t.sub.TextColor3 = on and SOFT_INK or MUT
+		t.sub.Text = locked and "Pick a target first" or d.sub
+		t.chip.Visible = on
+		t.cover.BackgroundTransparency = locked and 0.55 or 0
+		t.gl.TextTransparency = locked and 0.45 or 0
+	end
+	function paintAll() for id in pairs(tiles) do paintTile(id) end end
+
+	local function grid(parent, y0, bottomInset, cols, cellH)
+		local sc = new("ScrollingFrame", { Position = UDim2.fromOffset(0, y0), Size = UDim2.new(1, 0, 1, -y0 - bottomInset), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WHITE, ScrollBarImageTransparency = 0.7, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, parent)
 		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 14), PaddingBottom = UDim.new(0, 12), PaddingTop = UDim.new(0, 2) }, sc)
-		new("UIGridLayout", { CellSize = UDim2.new(parent == stMain and 0.5 or 1, parent == stMain and -5 or 0, 0, cellH), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, sc)
-		for i, d in ipairs(defs) do
-			local btn = new("TextButton", { Name = d[1], LayoutOrder = i, Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 0.94, BorderSizePixel = 0 }, sc)
-			rc(btn, 16) line(btn)
-			local title = txt(btn, d[2], 13, true, TXT, { Position = UDim2.fromOffset(14, 12), Size = UDim2.new(1, -28, 0, 18) })
-			local sub = txt(btn, d[3], 11, false, MUT, { Position = UDim2.fromOffset(14, 32), Size = UDim2.new(1, -28, 0, 28) , TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
-			tiles[d[1]] = { btn = btn, title = title, sub = sub }
-			btn.Activated:Connect(function()
-				if d[5] == "action" then d[4]() elseif active[d[1]] then stop(d[1]) else d[4]() end
-			end)
+		new("UIGridLayout", { CellSize = UDim2.new(1 / cols, cols == 1 and 0 or -math.ceil(10 * (cols - 1) / cols) - 1, 0, cellH), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, sc)
+		return sc
+	end
+
+	-- 2. trolls that need a target (with category filters)
+	mainSub = header(stMain, 2, "Pick a troll", "Pick a target on the left first")
+	local fRow = new("Frame", { Position = UDim2.fromOffset(12, 50), Size = UDim2.new(1, -24, 0, 24), BackgroundTransparency = 1 }, stMain)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, fRow)
+	local fBtns = {}
+	local mainGrid = grid(stMain, 82, 0, 2, 68)
+	local function applyFilter()
+		for name, b in pairs(fBtns) do
+			local sel = name == filter
+			b.BackgroundTransparency = sel and 0 or 0.94
+			b.TextColor3 = sel and INK or TXT
+		end
+		for _, t in pairs(tiles) do
+			if t.def.needs then t.btn.Visible = (filter == "All" or t.def.cat == filter) end
 		end
 	end
-	buildTiles(stMain, DEFS, 40, 70)
-	buildTiles(stSelf, SELFDEFS, 40, 70)
+	for i, name in ipairs({ "All", "Ride", "Follow", "Fling", "Hide" }) do
+		local b = pill(fRow, name, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 24), LayoutOrder = i })
+		new("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+		fBtns[name] = b
+		b.Activated:Connect(function() filter = name applyFilter() end)
+	end
+	local order = 0
+	for _, d in ipairs(DEFS) do
+		if d.needs then
+			order += 1
+			buildTile(mainGrid, d, 68)
+			tiles[d.id].btn.LayoutOrder = order
+		end
+	end
 
-	local stopBtn = new("TextButton", { Text = "Stop all", TextSize = 13, AutoButtonColor = false, BackgroundColor3 = SAIKIUI.red, BackgroundTransparency = 0.15, BorderSizePixel = 0, TextColor3 = WHITE, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.new(1, -24, 0, 34) }, stSelf)
-	styleText(stopBtn, true) rc(stopBtn, 17)
+	-- 3. solo trolls
+	header(stSelf, 3, "Just you", "No target needed")
+	local selfGrid = grid(stSelf, 52, 0, 1, 58)
+	order = 0
+	for _, d in ipairs(DEFS) do
+		if not d.needs then
+			order += 1
+			buildTile(selfGrid, d, 58)
+			tiles[d.id].btn.LayoutOrder = order
+		end
+	end
+
+	-- how it works
+	txt(stHelp, "How it works", 13, true, "t", { Position = UDim2.fromOffset(14, 10), Size = UDim2.new(1, -28, 0, 16) })
+	local steps = { "Pick a player on the left", "Tap a troll to switch it on", "Tap again, or jump, to stop" }
+	for i, t in ipairs(steps) do
+		badge(stHelp, i, 14, 22 + i * 22 - 14)
+		txt(stHelp, t, 11, false, "m", { Position = UDim2.fromOffset(44, 22 + i * 22 - 12), Size = UDim2.new(1, -56, 0, 14) })
+	end
+
+	-- stop everything pill
+	local stopBtn = new("TextButton", { Text = "Stop everything", TextSize = 13, AutoButtonColor = false, BackgroundColor3 = RED, BackgroundTransparency = 0.12, BorderSizePixel = 0, TextColor3 = WHITE, Size = UDim2.fromScale(1, 1) }, stStop)
+	styleText(stopBtn, true) rc(stopBtn, 24)
 	stopBtn.Activated:Connect(function() stopAll() say("Everything stopped.") end)
 
+	-- 4. Smoke card (very end of the page)
+	do
+		local d = { id = "smoke", title = "Smoke", sub = "Puffs with real pauses", cat = "Solo", glyph = "🚬", fn = smoke }
+		header(stSmoke, nil, "Smoke", "Inhale, exhale, rest. Not a constant stream")
+		buildTile(stSmoke, d, 64)
+		local t = tiles.smoke
+		t.btn.Position = UDim2.fromOffset(12, 56)
+		t.btn.Size = UDim2.new(1, -24, 0, 64)
+		txt(stSmoke, "Pace", 12, true, "t", { Position = UDim2.fromOffset(14, 134), Size = UDim2.new(1, -28, 0, 14) })
+		local pRow = new("Frame", { Position = UDim2.fromOffset(12, 154), Size = UDim2.new(1, -24, 0, 26), BackgroundTransparency = 1 }, stSmoke)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, pRow)
+		local pBtns = {}
+		local function paintPace()
+			for name, b in pairs(pBtns) do
+				local sel = name == smokePace
+				b.BackgroundTransparency = sel and 0 or 0.94
+				b.TextColor3 = sel and INK or TXT
+			end
+		end
+		for i, name in ipairs({ "Chill", "Normal", "Chain" }) do
+			local b = pill(pRow, name, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 26), LayoutOrder = i, TextSize = 12 })
+			new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, b)
+			pBtns[name] = b
+			b.Activated:Connect(function() smokePace = name paintPace() end)
+		end
+		paintPace()
+		txt(stSmoke, "Chill = long breaks, Chain = short breaks. Only you see the smoke.", 11, false, "m", { Position = UDim2.fromOffset(14, 192), Size = UDim2.new(1, -28, 0, 30), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
+		HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function() paintPace() end
+	end
+
+	------------------------------------------------------------ start
+	rebuild()
+	applyFilter()
+	refreshNow()
+	paintAll()
+
+	local acc, acc2 = 0, 0
+	local hb = RunService.Heartbeat:Connect(function(dt)
+		acc += dt acc2 += dt
+		if acc >= 0.25 then acc = 0 pcall(refreshNow) end
+		if acc2 >= 1 then acc2 = 0 pcall(updateDist) end
+	end)
 	LP.CharacterAdded:Connect(function() stopAll() end)
 	HOST.ThemeHooks[#HOST.ThemeHooks + 1] = function(th)
 		TXT, MUT = th.text, th.mut
-		for n in pairs(tiles) do paint(n) end
-		rebuild()
+		for _, e in ipairs(themed) do
+			if e[1].Parent then e[1].TextColor3 = (e[2] == "m") and MUT or TXT end
+		end
+		paintAll()
+		paintRows()
+		applyFilter()
+		refreshNow()
 	end
-	HOST.Gui.Destroying:Connect(stopAll)
+	HOST.Gui.Destroying:Connect(function() hb:Disconnect() stopAll() end)
 end)
 
 -- Unified host cleanup handle.
