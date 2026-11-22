@@ -4480,7 +4480,7 @@ setOpen(true)
 
 ----------------------------------------------------------------- Rank + Settings tabs and Auras (each loaded separately, so a problem in one can never stop the chat from loading)
 ;(function()
-	local H = { T = T, gui = gui, win = win, container = container, pages = pages, winScale = winScale, new = new, corner = corner,
+	local H = { HOST = HOST, SAIKIUI = SAIKIUI, T = T, gui = gui, win = win, container = container, pages = pages, winScale = winScale, new = new, corner = corner,
 		stroke = stroke, grad = grad, tween = tween, toast = toast, bind = bind, newScroll = newScroll, addHeader = addHeader,
 		addEmpty = addEmpty, clearList = clearList, thumb = thumb, FS = FS, fitScale = fitScale, CONFIG = CONFIG, blur = blur,
 		request = REQUEST, cache = CACHE, me = ME,
@@ -4527,6 +4527,7 @@ local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local TextService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
+local HOST, SAIKIUI = H.HOST, H.SAIKIUI -- this chunk runs through loadstring, so it can't see the main script's locals
 local DISCORD, DISCORD_CODE = "https://discord.gg/63eEChZ6YU", "63eEChZ6YU"
 local INK2 = Color3.fromRGB(18, 18, 20)
 
@@ -4887,8 +4888,10 @@ do
 		if busy or not th then return end
 		busy = true
 		T.bg, T.accA, T.accB, T.text, T.mut, T.ov, T.bgT = th.bg, th.accA, th.accB, th.text, th.mut, th.ov, th.bgT
-		SAIKIUI.text, SAIKIUI.mut, SAIKIUI.ink = th.text, th.mut, th.cardA -- things built later start in the new colours
-		HOST.AccentA = th.accA -- the animated title gradient follows the theme
+		pcall(function()
+			SAIKIUI.text, SAIKIUI.mut, SAIKIUI.ink = th.text, th.mut, th.cardA -- things built later start in the new colours
+			HOST.AccentA = th.accA -- the animated title gradient follows the theme
+		end)
 		pcall(function() if HOST.SetTheme then HOST.SetTheme(th, instant) end end) -- cards, dock, top capsule, background
 		task.spawn(function()
 			local ok, err = pcall(recolor, th, instant)
