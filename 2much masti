@@ -5651,34 +5651,44 @@ end)()
 
 ----------------------------------------------------------------- smoke sync: share your smoke (on/off + pace) with other Saiki Rechat users in this server
 ;(function()
+	-- own small Firebase project in test mode (open read/write, no login needed): /<server>/<userId> = { p = pace, t = server time }
+	local SMOKE_DB = "https://knownssmokers-default-rtdb.asia-southeast1.firebasedatabase.app"
 	local OK = { Chill = true, Normal = true, Chain = true }
-	local base = "/servers/" .. enc(JOB) .. "/presence"
 	local warned = false
-	local function tag(pace) return pace and ("|" .. pace) or "" end
+	local function url(path) return SMOKE_DB .. "/" .. path .. ".json" end
+	local function call(method, path, body)
+		if not REQUEST then return false end
+		local opts = { Url = url(path), Method = method, Headers = { ["Content-Type"] = "application/json" } }
+		if body ~= nil then opts.Body = (type(body) == "string") and body or HttpService:JSONEncode(body) end
+		local ok, res = pcall(REQUEST, opts)
+		local code = ok and res and tonumber(res.StatusCode or res.Status or 0) or 0
+		if not (code >= 200 and code < 300) then
+			if not warned then
+				warned = true
+				warn("[SAIKI RECHAT] Smoke sync: " .. method .. " failed (HTTP " .. tostring(code) .. ")" .. ((ok and res and (res.Body or res.body)) and (" " .. tostring(res.Body or res.body):sub(1, 120)) or ""))
+			end
+			return false
+		end
+		local data
+		local raw = res.Body or res.body or ""
+		if raw ~= "" then pcall(function() data = HttpService:JSONDecode(raw) end) end
+		return true, data
+	end
+	local mine = "smk_" .. enc(JOB) .. "/" .. ME
 	HOST.Net = {
 		-- pace = "Chill" | "Normal" | "Chain", or nil to turn my smoke off
 		setSmoke = function(pace)
-			if not REQUEST then return end
-			if pace and not OK[pace] then pace = nil end
-			HOST.SmokeTag = tag(pace) -- the presence heartbeat keeps this suffix on my name
 			task.spawn(function()
-				local name = cut(LP.DisplayName, 30)
-				if not pace then pcall(dbRequest, "PATCH", base .. "/" .. ME, '{"sm":null}', auth, FIREBASE_DB) end -- a nil field would just be skipped
-				-- the pace goes in its own field AND hidden after my name, so strict database rules can't break it
-				local ok, _, _, code = dbRequest("PATCH", base .. "/" .. ME, { sm = pace, t = SV, n = name .. tag(pace) }, auth, FIREBASE_DB)
-				if not ok then
-					ok, _, _, code = dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = name .. tag(pace) }, auth, FIREBASE_DB)
-				end
-				if not ok and not warned then
-					warned = true
-					warn("[SAIKI RECHAT] Smoke sync: write to " .. base .. " failed (HTTP " .. tostring(code) .. "). Allow read + write on /servers/$job/presence/$id.")
+				if pace and OK[pace] then
+					call("PUT", mine, { p = pace, t = { [".sv"] = "timestamp" } })
+				else
+					call("DELETE", mine)
 				end
 			end)
 		end,
-		-- returns { [userId] = pace } for everyone currently smoking, or nil if the request failed
+		-- returns { [userId] = pace } for everyone currently smoking in this server, or nil if the request failed
 		getSmokers = function()
-			if not REQUEST then return nil end
-			local ok, data = dbRequest("GET", base, nil, auth, FIREBASE_DB)
+			local ok, data = call("GET", "smk_" .. enc(JOB))
 			if not ok then return nil end
 			local out = {}
 			if type(data) == "table" then
@@ -5688,9 +5698,8 @@ end)()
 				end
 				for id, e in pairs(data) do
 					local uid = tonumber(id)
-					if uid and type(e) == "table" and maxT - (tonumber(e.t) or 0) <= 100000 then
-						local pace = OK[e.sm] and e.sm or (type(e.n) == "string" and e.n:match("|(%a+)$")) or nil
-						if pace and OK[pace] then out[uid] = pace end
+					if uid and type(e) == "table" and OK[e.p] and maxT - (tonumber(e.t) or 0) <= 100000 then
+						out[uid] = e.p
 					end
 				end
 			end
@@ -5781,7 +5790,7 @@ end)()
 			local now = os.clock()
 			if HB.ENABLED and now - lastW >= HB.WRITE_EVERY then
 				lastW = now
-				dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = cut(LP.DisplayName, 30) .. (HOST.SmokeTag or "") }, auth, FIREBASE_DB)
+				dbRequest("PATCH", base .. "/" .. ME, { t = SV, n = cut(LP.DisplayName, 40) }, auth, FIREBASE_DB)
 			end
 			if HB.ENABLED and now - lastR >= HB.READ_EVERY then
 				lastR = now
