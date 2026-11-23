@@ -5649,10 +5649,49 @@ end)
 	end)
 end)()
 
+----------------------------------------------------------------- smoke sync: share your smoke (on/off + pace) with other Saiki Rechat users in this server
+;(function()
+	local OK = { Chill = true, Normal = true, Chain = true }
+	local base = "/servers/" .. enc(JOB) .. "/presence"
+	HOST.Net = {
+		-- pace = "Chill" | "Normal" | "Chain", or nil to turn my smoke off
+		setSmoke = function(pace)
+			if not REQUEST then return end
+			task.spawn(function()
+				if pace and OK[pace] then
+					dbRequest("PATCH", base .. "/" .. ME, { sm = pace, t = SV, n = cut(LP.DisplayName, 40) }, auth, FIREBASE_DB)
+				else
+					dbRequest("PATCH", base .. "/" .. ME, '{"sm":null}', auth, FIREBASE_DB)
+				end
+			end)
+		end,
+		-- returns { [userId] = pace } for everyone currently smoking, or nil if the request failed
+		getSmokers = function()
+			if not REQUEST then return nil end
+			local ok, data = dbRequest("GET", base, nil, auth, FIREBASE_DB)
+			if not ok then return nil end
+			local out = {}
+			if type(data) == "table" then
+				local maxT = 0
+				for _, e in pairs(data) do
+					if type(e) == "table" then maxT = math.max(maxT, tonumber(e.t) or 0) end
+				end
+				for id, e in pairs(data) do
+					local uid = tonumber(id)
+					if uid and type(e) == "table" and OK[e.sm] and maxT - (tonumber(e.t) or 0) <= 100000 then
+						out[uid] = e.sm
+					end
+				end
+			end
+			return out
+		end,
+	}
+end)()
+
 ----------------------------------------------------------------- head banner: every Saiki Rechat user gets a themed banner over their head (seen by other Saiki Rechat users)
--- Far away it is a slim banner over the character. When you walk close the banner vanishes (nothing in its place). If that player
--- then says something in Saiki Rechat server chat, a Saiki chat bubble pops up over them and stays as long as a normal Roblox
--- chat bubble does, then vanishes. Colours always follow YOUR OWN current theme (Settings > Appearance).
+-- Far away it is a slim banner over the character; close up it is hidden. The moment that player says something in Saiki Rechat
+-- server chat, their banner is swapped for a Saiki chat bubble showing the WHOLE message (any distance). It stays as long as a
+-- normal Roblox chat bubble does, then the banner comes back. Colours always follow YOUR OWN current theme (Settings > Appearance).
 -- Who gets a banner: ONLY players currently running Saiki Rechat in this server. Each client writes a heartbeat to
 -- /servers/<job>/presence/<id> and reads the others; nobody who isn't running it ever shows up (no guessing).
 -- Suggested rules (merge under servers/$job): "presence": { ".read": "auth != null",
@@ -5662,9 +5701,9 @@ end)()
 		ENABLED = true,
 		SHOW_SELF = false,      -- true = also draw it over your own head
 		TEXT = "Simple Rechat", -- banner text
-		NEAR = 14,              -- studs: closer than this = banner fully gone (chat bubble can show)
-		FAR = 26,               -- studs: farther than this = banner fully shown
-		MAX_DIST = 220,         -- hidden beyond this
+		NEAR = 20,              -- studs: closer than this = banner fully gone
+		FAR = 36,               -- studs: farther than this = banner fully shown
+		MAX_DIST = 320,         -- banner AND chat bubble are hidden beyond this
 		LIFT = 3.4,             -- studs above the head
 		MSG_SECONDS = 15,       -- how long a bubble stays (same as Roblox's default chat bubble; the game's own setting is used if readable)
 		WRITE_EVERY = 30, READ_EVERY = 10, FRESH_MS = 100000,
@@ -5687,7 +5726,7 @@ end)()
 	local function noteMsg(uid, text)
 		uid = tonumber(uid)
 		if uid and type(text) == "string" and text:match("%S") then
-			lastMsg[uid] = { text = cut((text:gsub("%c", " ")), 90), at = os.clock() }
+			lastMsg[uid] = { text = cut((text:gsub("%c", " ")), 400), at = os.clock() } -- whole message (chat itself caps it at 200)
 		end
 	end
 	local origShow = T.showServer
@@ -5770,9 +5809,10 @@ end)()
 		local bb = Instance.new("BillboardGui")
 		bb.Name = "SAIKI_TAG_" .. plr.UserId
 		bb.Adornee = head
-		bb.Size = UDim2.fromOffset(280, 120)
+		bb.Size = UDim2.fromOffset(280, 300)
+		bb.SizeOffset = Vector2.new(0, 0.5) -- shift up by half its height: the bottom edge stays at the anchor at any zoom
 		bb.StudsOffsetWorldSpace = Vector3.new(0, HB.LIFT, 0)
-		bb.AlwaysOnTop = false
+		bb.AlwaysOnTop = true -- never cut off by the ground / parts when zoomed out
 		bb.LightInfluence = 0
 		bb.ResetOnSpawn = false
 		bb.MaxDistance = HB.MAX_DIST
@@ -5887,16 +5927,16 @@ end)()
 		bp.PaddingLeft, bp.PaddingRight = UDim.new(0, 12), UDim.new(0, 12)
 		bp.PaddingTop, bp.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
 		local bsz = Instance.new("UISizeConstraint", bub)
-		bsz.MaxSize = Vector2.new(250, 100)
+		bsz.MaxSize = Vector2.new(250, math.huge)
 		local mtxt = mkLabel(bub, 14, false)
 		mtxt.TextWrapped = true
 		mtxt.ZIndex = 3
 		mtxt.TextXAlignment = Enum.TextXAlignment.Center
 		local msz = Instance.new("UISizeConstraint", mtxt)
-		msz.MaxSize = Vector2.new(220, 80)
+		msz.MaxSize = Vector2.new(220, math.huge)
 
 		return { plr = plr, bb = bb, bg = bg, cg = cg, card = card, btail = btail, csg = csg, btg = btg, rg = rg, pfp = pfp, letter = letter,
-			title = title, sub = sub, bub = bub, bs = bs, tail = tail, ts = ts, mtxt = mtxt, mix = 0, shown = "" }
+			title = title, sub = sub, bub = bub, bs = bs, tail = tail, ts = ts, mtxt = mtxt, mix = 0, bm = 0, shown = "" }
 	end
 
 	local lastSig = ""
@@ -5978,15 +6018,17 @@ end)()
 				t.csg.Rotation = (now * 70) % 360
 				t.btg.Rotation = t.csg.Rotation
 				t.rg.Rotation = (-now * 90) % 360
-				t.bb.StudsOffsetWorldSpace = Vector3.new(0, HB.LIFT + math.sin(now * 2 + (uid % 7)) * 0.07, 0)
+				t.bb.StudsOffsetWorldSpace = Vector3.new(0, HB.LIFT + math.min(dist * 0.035, 7) + math.sin(now * 2 + (uid % 7)) * 0.07, 0) -- rises a bit when zoomed out so it stays clear of the ground
 				if pfpAsset and t.pfp.Image ~= pfpAsset then t.pfp.Image = pfpAsset t.letter.Visible = false end
-				-- banner: only when far (fades out completely when close, nothing replaces it)
-				t.bg.GroupTransparency = t.mix
-				t.bg.Visible = t.mix < 0.98
-				-- bubble: only while this player's Saiki Rechat message is fresh, and only when close
 				local m = lastMsg[uid]
 				local age = m and (now - m.at) or math.huge
-				if age < HB.MSG_SECONDS then
+				local hasMsg = age < HB.MSG_SECONDS
+				t.bm += ((hasMsg and 1 or 0) - t.bm) * alpha
+				-- banner: only when far AND this player has no fresh message (a message swaps it for the bubble)
+				t.bg.GroupTransparency = 1 - (1 - t.mix) * (1 - t.bm)
+				t.bg.Visible = t.bg.GroupTransparency < 0.98
+				-- bubble: the whole message, at any distance, for as long as a normal chat bubble stays; then the banner comes back
+				if hasMsg then
 					if t.shown ~= m.text then
 						t.shown = m.text
 						t.mtxt.Text = m.text
@@ -5994,7 +6036,7 @@ end)()
 					end
 					local fadeIn = math.clamp(age / 0.25, 0, 1)
 					local fadeOut = math.clamp((HB.MSG_SECONDS - age) / 0.5, 0, 1)
-					t.cg.GroupTransparency = 1 - (t.mix * fadeIn * fadeOut)
+					t.cg.GroupTransparency = 1 - (fadeIn * fadeOut)
 					t.cg.Visible = t.cg.GroupTransparency < 0.98
 				else
 					t.cg.Visible = false
@@ -9581,8 +9623,7 @@ HOST.Run("Trolls", function()
 	end
 
 
-	-- Smoke: realistic puffs (drag in, hold, exhale, then rest a few seconds) instead of a constant stream.
-	-- Only you see the particles (they live on your own client).
+	-- Smoke: realistic puffs (drag in, hold, exhale, rest). Your on/off state and pace are shared with other Saiki users in the server.
 	local smokePace = "Normal"
 	local PACES = {
 		Chill = { exhale = { 3.0, 4.5 }, rest = { 4.0, 7.0 } },
@@ -9593,12 +9634,10 @@ HOST.Run("Trolls", function()
 		local t = tiles.smoke
 		if t and active.smoke then t.sub.Text = text end
 	end
-	local function smoke()
-		local head = LP.Character and LP.Character:FindFirstChild("Head")
-		if not head then say("No character.") return end
-		local old = head:FindFirstChild("SaikiSmoke")
+	local function makeSmoke(head, name)
+		local old = head:FindFirstChild(name)
 		if old then old:Destroy() end
-		local attach = new("Attachment", { Name = "SaikiSmoke", Position = Vector3.new(0, -0.45, -0.6) }, head)
+		local attach = new("Attachment", { Name = name, Position = Vector3.new(0, -0.45, -0.6) }, head)
 		local em = new("ParticleEmitter", {
 			Texture = "rbxasset://textures/particles/smoke_main.dds",
 			Color = ColorSequence.new(Color3.fromRGB(235, 235, 235)),
@@ -9609,39 +9648,105 @@ HOST.Run("Trolls", function()
 			RotSpeed = NumberRange.new(-30, 30), Rotation = NumberRange.new(0, 360),
 			EmissionDirection = Enum.NormalId.Front,
 		}, attach)
-		local a = begin("smoke", function() pcall(function() attach:Destroy() end) end)
-		local function nap(sec)
-			local t = tick()
-			while active.smoke == a and tick() - t < sec do task.wait(0.1) end
-			return active.smoke == a
-		end
+		return attach, em
+	end
+	-- one puff loop used for your own smoke AND for other players' smoke
+	local function smokeLoop(attach, em, paceFn, isLive, status)
+		status = status or function() end
 		task.spawn(function()
-			while active.smoke == a do
-				if not attach.Parent then stop("smoke") break end
-				local P = PACES[smokePace] or PACES.Normal
-				smokeStatus("Inhaling...")
+			local function nap(sec)
+				local t = tick()
+				while isLive() and tick() - t < sec do task.wait(0.1) end
+				return isLive()
+			end
+			while isLive() do
+				if not attach.Parent then break end
+				local P = PACES[paceFn()] or PACES.Normal
+				status("Inhaling...")
 				if not nap(1.0 + math.random() * 0.6) then break end
-				smokeStatus("Holding it in...")
+				status("Holding it in...")
 				if not nap(0.6 + math.random() * 0.6) then break end
-				-- exhale: a soft burst, then a stream that thins out
-				smokeStatus("Exhaling...")
+				status("Exhaling...")
 				local dur = P.exhale[1] + math.random() * (P.exhale[2] - P.exhale[1])
 				pcall(function() em:Emit(8) end)
 				local t0 = tick()
-				while active.smoke == a do
+				while isLive() do
 					local t = tick() - t0
 					if t >= dur then break end
 					em.Rate = 4 + 42 * (1 - t / dur) ^ 0.8
 					RunService.Heartbeat:Wait()
 				end
 				em.Rate = 0
-				if active.smoke ~= a then break end
+				if not isLive() then break end
 				local rest = P.rest[1] + math.random() * (P.rest[2] - P.rest[1])
-				smokeStatus(string.format("Resting (%ds)", math.ceil(rest)))
+				status(string.format("Resting (%ds)", math.ceil(rest)))
 				if not nap(rest) then break end
+			end
+			pcall(function() em.Rate = 0 end)
+		end)
+	end
+	local function shareSmoke(pace)
+		local Net = HOST.Net
+		if Net and Net.setSmoke then pcall(Net.setSmoke, pace) end
+	end
+	local function smoke()
+		local head = LP.Character and LP.Character:FindFirstChild("Head")
+		if not head then say("No character.") return end
+		local attach, em = makeSmoke(head, "SaikiSmoke")
+		local a = begin("smoke", function()
+			pcall(function() attach:Destroy() end)
+			shareSmoke(nil) -- tell everyone I stopped
+		end)
+		shareSmoke(smokePace) -- tell everyone I started, with my pace
+		smokeLoop(attach, em, function() return smokePace end, function() return active.smoke == a end, smokeStatus)
+		task.spawn(function() -- keep my flag fresh
+			while active.smoke == a do
+				task.wait(25)
+				if active.smoke == a then shareSmoke(smokePace) end
 			end
 		end)
 	end
+
+	-- other players' smoke (only players running this script in the same server)
+	local remoteSmoke = {}
+	local function dropRemote(uid)
+		local r = remoteSmoke[uid]
+		if r then
+			r.dead = true
+			pcall(function() r.attach:Destroy() end)
+			remoteSmoke[uid] = nil
+		end
+	end
+	task.spawn(function()
+		while HOST.Gui.Parent do
+			local Net = HOST.Net
+			if Net and Net.getSmokers then
+				local ok, list = pcall(Net.getSmokers)
+				if ok and list then
+					for uid, pace in pairs(list) do
+						local pl = Players:GetPlayerByUserId(uid)
+						if pl and pl ~= LP then
+							local head = pl.Character and pl.Character:FindFirstChild("Head")
+							local r = remoteSmoke[uid]
+							if r and (not r.attach.Parent or r.attach.Parent ~= head) then dropRemote(uid) r = nil end
+							if head and not r then
+								local attach, em = makeSmoke(head, "SaikiSmokeR")
+								r = { attach = attach, pace = pace }
+								remoteSmoke[uid] = r
+								smokeLoop(attach, em, function() return r.pace end, function() return not r.dead end)
+							end
+							if r then r.pace = pace end -- follows whatever mode they switch to
+						end
+					end
+					for uid in pairs(remoteSmoke) do
+						if not list[uid] or not Players:GetPlayerByUserId(uid) then dropRemote(uid) end
+					end
+				end
+			end
+			task.wait(3)
+		end
+		for uid in pairs(remoteSmoke) do dropRemote(uid) end
+	end)
 
 	------------------------------------------------------------ the list of trolls
 	-- cat: Ride / Follow / Fling / Hide (need a target) or Solo (no target).  needs = true when a target is required.
@@ -9980,7 +10085,7 @@ HOST.Run("Trolls", function()
 			local b = pill(pRow, name, { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 26), LayoutOrder = i, TextSize = 12 })
 			new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, b)
 			pBtns[name] = b
-			b.Activated:Connect(function() smokePace = name paintPace() end)
+			b.Activated:Connect(function() smokePace = name paintPace() if active.smoke then shareSmoke(smokePace) end end)
 		end
 		paintPace()
 		txt(stSmoke, "Chill = long breaks, Chain = short breaks. Only you see the smoke.", 11, false, "m", { Position = UDim2.fromOffset(14, 192), Size = UDim2.new(1, -28, 0, 30), TextWrapped = true, TextTruncate = Enum.TextTruncate.None, TextYAlignment = Enum.TextYAlignment.Top })
