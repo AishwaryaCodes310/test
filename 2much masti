@@ -25,7 +25,7 @@ do
 		"https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/allowedbykn",
 	}
 	local BG_URL = "https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/790592909607245608.jpg"
-	local DENIED_TEXT = "Removed For Maintenance / Under Work"
+	local DENIED_TEXT = "Script has been deleted or Removed For Maintenance / Under Work [404 Source not found]"
 	local REGION_TEXT = "Simple Rechat has not been launched in your country yet. So far it is only live for India and Nepal, and it is in beta. It will launch in your country soon."
 	-- ISO country codes in Asia: only used if the IP lookup does not report a continent itself
 	local ASIA_CC = {}
