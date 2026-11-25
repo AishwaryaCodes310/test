@@ -584,6 +584,105 @@ pageTitle.ZIndex = 50
 styleText(pageTitle, true)
 pageTitle.Parent = HOST.Sheet
 
+-- top-left greeting: a random hello in a different language + that country's flag (drawn from frames, so it shows on every device)
+do
+    local R = Color3.fromRGB
+    local WHITE, RED, GREEN, BLUE = R(255, 255, 255), R(206, 43, 55), R(0, 146, 70), R(0, 82, 180)
+    -- stripes run "v" (side by side) or "h" (stacked); canton / circle are optional extras
+    local GREETINGS = {
+        { "Ciao",       { dir = "v", GREEN, WHITE, R(206, 43, 55) } },                       -- Italy
+        { "Hello",      { dir = "h", RED, WHITE, RED, WHITE, RED, WHITE, RED, canton = R(60, 59, 110) } }, -- USA (simplified)
+        { "Bonjour",    { dir = "v", R(0, 85, 164), WHITE, R(239, 65, 53) } },               -- France
+        { "¡Hola!",     { dir = "h", R(170, 21, 27), R(241, 191, 0), R(170, 21, 27), weights = { 1, 2, 1 } } }, -- Spain
+        { "Hallo",      { dir = "h", R(20, 20, 20), R(221, 0, 0), R(255, 206, 0) } },         -- Germany
+        { "Namaste",    { dir = "h", R(255, 153, 51), WHITE, R(19, 136, 8), circle = R(0, 0, 128), circleR = 0.17, circleRing = true } }, -- India
+        { "Konnichiwa", { dir = "h", WHITE, circle = R(188, 0, 45), circleR = 0.3 } },        -- Japan
+        { "Olá",        { dir = "v", R(0, 102, 0), R(255, 0, 0), weights = { 2, 3 } } },      -- Portugal
+        { "Hoi",        { dir = "h", R(174, 28, 40), WHITE, R(33, 70, 139) } },               -- Netherlands
+        { "Privet",     { dir = "h", WHITE, R(0, 57, 166), R(213, 43, 30) } },                -- Russia
+        { "Salut",      { dir = "v", R(0, 43, 127), R(252, 209, 22), R(206, 17, 38) } },      -- Romania
+        { "Cześć",      { dir = "h", WHITE, R(220, 20, 60) } },                               -- Poland
+    }
+    local pick = GREETINGS[math.random(1, #GREETINGS)]
+    local dn = tostring(LocalPlayer.DisplayName or LocalPlayer.Name)
+    pageTitle.Text = pick[1] .. " " .. dn
+    pageTitle.TextTruncate = Enum.TextTruncate.AtEnd
+    pageTitle.Size = UDim2.fromOffset(290, 30)
+
+    local FW, FH = 28, 19
+    local flag = Instance.new("CanvasGroup")
+    flag.Name = "GreetingFlag"
+    flag.BackgroundColor3 = WHITE
+    flag.BorderSizePixel = 0
+    flag.Size = UDim2.fromOffset(FW, FH)
+    flag.ZIndex = 50
+    flag.Parent = HOST.Sheet
+    Instance.new("UICorner", flag).CornerRadius = UDim.new(0, 4)
+    local fs = Instance.new("UIStroke", flag)
+    fs.Color = Color3.new(1, 1, 1)
+    fs.Transparency = 0.7
+    fs.Thickness = 1
+
+    local spec = pick[2]
+    local vertical = spec.dir == "v"
+    local total = 0
+    local n = #spec
+    for i = 1, n do total += (spec.weights and spec.weights[i]) or 1 end
+    local acc = 0
+    for i = 1, n do
+        local w = ((spec.weights and spec.weights[i]) or 1) / total
+        local st = Instance.new("Frame")
+        st.BorderSizePixel = 0
+        st.BackgroundColor3 = spec[i]
+        st.ZIndex = 51
+        if vertical then
+            st.Position = UDim2.fromScale(acc, 0)
+            st.Size = UDim2.fromScale(w, 1)
+        else
+            st.Position = UDim2.fromScale(0, acc)
+            st.Size = UDim2.fromScale(1, w)
+        end
+        st.Parent = flag
+        acc += w
+    end
+    if spec.canton then
+        local c = Instance.new("Frame")
+        c.BorderSizePixel = 0
+        c.BackgroundColor3 = spec.canton
+        c.Size = UDim2.fromScale(0.42, 4 / 7)
+        c.ZIndex = 52
+        c.Parent = flag
+    end
+    if spec.circle then
+        local d = Instance.new("Frame")
+        d.AnchorPoint = Vector2.new(0.5, 0.5)
+        d.Position = UDim2.fromScale(0.5, 0.5)
+        local px = math.floor(FH * (spec.circleR or 0.25) * 2 + 0.5)
+        d.Size = UDim2.fromOffset(px, px)
+        d.BorderSizePixel = 0
+        d.ZIndex = 52
+        d.Parent = flag
+        Instance.new("UICorner", d).CornerRadius = UDim.new(1, 0)
+        if spec.circleRing then -- India's wheel: a blue ring on the white band
+            d.BackgroundTransparency = 1
+            local ring = Instance.new("UIStroke", d)
+            ring.Color = spec.circle
+            ring.Thickness = 1.2
+        else
+            d.BackgroundColor3 = spec.circle
+        end
+    end
+
+    HOST.TitleFlag = flag
+    HOST.TitleShift = FW + 10
+    HOST.PlaceFlag = function(compact)
+        local ty = compact and 8 or 26
+        flag.Position = UDim2.fromOffset(34, ty + math.floor((30 - FH) / 2))
+        pageTitle.Position = UDim2.fromOffset(34 + HOST.TitleShift, ty)
+    end
+    pcall(HOST.PlaceFlag, false)
+end
+
 local pageSub = Instance.new("TextLabel")
 pageSub.Name = "PageSub"
 pageSub.BackgroundTransparency = 1
@@ -625,7 +724,7 @@ local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
 local curSection = 0
 
 local function paintSection(i)
-    pageTitle.Text = SECTIONS[i].title
+    -- the big title is the greeting now; only the small line under it follows the tab
     pageSub.Text = SECTIONS[i].sub
 end
 
@@ -680,7 +779,7 @@ function HOST.Relayout()
     local dockH = compact and 34 or 42
     -- the bottom dock lives in this strip, so cards run almost to the bottom edge instead of leaving a blank band
     local botH = dockH + (compact and 14 or 22)
-    pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26)
+    if HOST.PlaceFlag then pcall(HOST.PlaceFlag, compact) else pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26) end
     pageTitle.TextSize = compact and 20 or 24
     pageSub.Position = UDim2.fromOffset(35, compact and 34 or 56)
     Scroll.Position = UDim2.fromOffset(0, topH)
@@ -1378,10 +1477,12 @@ do
     local function setTexts(v)
         pageTitle.TextTransparency = v
         pageSub.TextTransparency = v
+        if HOST.TitleFlag then HOST.TitleFlag.GroupTransparency = v end
         for _, b in ipairs(dockBtns) do b.TextTransparency = v end
     end
     local function tweenTexts(info, v)
         fxPlay(pageTitle, info, { TextTransparency = v })
+        if HOST.TitleFlag then fxPlay(HOST.TitleFlag, info, { GroupTransparency = v }) end
         fxPlay(pageSub, info, { TextTransparency = v })
         for _, b in ipairs(dockBtns) do fxPlay(b, info, { TextTransparency = v }) end
     end
