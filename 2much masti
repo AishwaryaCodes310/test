@@ -26,6 +26,10 @@ do
 	}
 	local BG_URL = "https://raw.githubusercontent.com/thedevilondiscord/DIVINE_scripts/main/790592909607245608.jpg"
 	local DENIED_TEXT = "Script has been deleted or Removed for the timebeing [404 Source not found]"
+	local REGION_TEXT = "Simple Rechat has not been launched in your country yet. So far it is only live for India and Nepal, and it is in beta. It will launch in your country soon."
+	-- ISO country codes in Asia: only used if the IP lookup does not report a continent itself
+	local ASIA_CC = {}
+	for cc in ("AF AM AZ BH BD BT BN KH CN CY GE IN ID IR IQ IL JP JO KZ KW KG LA LB MY MV MN MM NP KP OM PK PS PH QA SA SG KR LK SY TW TJ TH TL TR TM AE UZ VN YE HK MO"):gmatch("%a%a") do ASIA_CC[cc] = true end
 	local AGE_TOLERANCE_DAYS = 3
 
 	-- baseline taken before anything else can change it
@@ -241,8 +245,37 @@ do
 		return false
 	end
 
+	----------------------------------------------------------- IP region check
+	-- returns true = outside Asia, false = in Asia, nil = could not tell (then the normal denied screen is used)
+	local function outsideAsia()
+		local function judge(continent, cc)
+			continent = type(continent) == "string" and continent:upper() or nil
+			cc = type(cc) == "string" and cc:upper() or nil
+			if continent and #continent == 2 then return continent ~= "AS" end
+			if cc and #cc == 2 then return not ASIA_CC[cc] end
+			return nil
+		end
+		local d = jsonGet("https://ipwho.is/")
+		if d and d.success ~= false then
+			local r = judge(d.continent_code, d.country_code)
+			if r ~= nil then return r end
+		end
+		d = jsonGet("https://ipapi.co/json/")
+		if d and not d.error then
+			local r = judge(d.continent_code, d.country_code)
+			if r ~= nil then return r end
+		end
+		d = jsonGet("https://api.country.is/")
+		if d then
+			local r = judge(nil, d.country)
+			if r ~= nil then return r end
+		end
+		return nil
+	end
+
 	----------------------------------------------------------- unauthorized GUI
-	local function showDenied()
+	local function showDenied(text, small, secs)
+		local LIFE = secs or 10
 		local gui = Instance.new("ScreenGui")
 		gui.Name = "SAIKI_404"
 		gui.ResetOnSpawn = false
@@ -293,12 +326,12 @@ do
 
 		local msg = Instance.new("TextLabel")
 		msg.AnchorPoint = Vector2.new(0.5, 0)
-		msg.Position = UDim2.new(0.5, 0, 0, 72)
-		msg.Size = UDim2.fromOffset(W - 40, 100)
+		msg.Position = UDim2.new(0.5, 0, 0, small and 58 or 72)
+		msg.Size = UDim2.fromOffset(W - 40, small and 132 or 100)
 		msg.BackgroundTransparency = 1
-		msg.Text = DENIED_TEXT
+		msg.Text = text or DENIED_TEXT
 		msg.TextWrapped = true
-		msg.TextSize = 18
+		msg.TextSize = small and 15 or 18
 		msg.Font = Enum.Font.GothamBold
 		msg.TextColor3 = Color3.new(1, 1, 1)
 		msg.TextStrokeTransparency = 0.4
@@ -324,7 +357,7 @@ do
 		count.Position = UDim2.new(1, -70, 0, 8)
 		count.Size = UDim2.fromOffset(60, 56)
 		count.BackgroundTransparency = 1
-		count.Text = "10"
+		count.Text = tostring(LIFE)
 		count.TextSize = 34
 		count.Font = Enum.Font.GothamBold
 		count.TextColor3 = Color3.fromRGB(255, 70, 70)
@@ -346,11 +379,11 @@ do
 			if dead then return end
 			local el = os.clock() - t0
 			xBtn.Rotation = math.sin(el * 14) * 14
-			count.Text = tostring(math.max(0, math.ceil(10 - el)))
-			if el >= 10 then kill() end
+			count.Text = tostring(math.max(0, math.ceil(LIFE - el)))
+			if el >= LIFE then kill() end
 		end)
 		-- safety net in case Heartbeat is paused
-		task.delay(10.5, kill)
+		task.delay(LIFE + 0.5, kill)
 
 		-- fetch the picture (needs request + writefile + getcustomasset); the panel works without it
 		task.spawn(function()
@@ -379,7 +412,12 @@ do
 		end
 	end
 	if not allowed then
-		showDenied()
+		-- people outside Asia get the "not launched in your country yet" notice instead of the 404 screen
+		if GATE_REQ and outsideAsia() == true then
+			showDenied(REGION_TEXT, true, 15)
+		else
+			showDenied()
+		end
 		return
 	end
 
