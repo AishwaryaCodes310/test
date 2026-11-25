@@ -5649,57 +5649,70 @@ end)
 	end)
 end)()
 
------------------------------------------------------------------ smoke sync: share your smoke (on/off + pace) with other Saiki Rechat users in this server
+----------------------------------------------------------------- smoke sync: share your smoke with other Saiki Rechat users in this server
 ;(function()
-	-- own small Firebase project in test mode (open read/write, no login needed): /<server>/<userId> = { p = pace, t = server time }
 	local SMOKE_DB = "https://knownssmokers-default-rtdb.asia-southeast1.firebasedatabase.app"
 	local OK = { Chill = true, Normal = true, Chain = true }
 	local warned = false
 	local function url(path) return SMOKE_DB .. "/" .. path .. ".json" end
+
 	local function call(method, path, body)
-		if not REQUEST then return false end
-		local opts = { Url = url(path), Method = method, Headers = { ["Content-Type"] = "application/json" } }
-		if body ~= nil then opts.Body = (type(body) == "string") and body or HttpService:JSONEncode(body) end
+		if type(REQUEST) ~= "function" then return false end
+		local opts = {
+			Url = url(path),
+			Method = method,
+			Headers = { ["Content-Type"] = "application/json" },
+		}
+		if body ~= nil then
+			opts.Body = type(body) == "string" and body or HttpService:JSONEncode(body)
+		end
 		local ok, res = pcall(REQUEST, opts)
-		local code = ok and res and tonumber(res.StatusCode or res.Status or 0) or 0
-		if not (code >= 200 and code < 300) then
+		local code = ok and type(res) == "table" and tonumber(res.StatusCode or res.Status) or 0
+		if not code or code < 200 or code >= 300 then
 			if not warned then
 				warned = true
-				warn("[SAIKI RECHAT] Smoke sync: " .. method .. " failed (HTTP " .. tostring(code) .. ")" .. ((ok and res and (res.Body or res.body)) and (" " .. tostring(res.Body or res.body):sub(1, 120)) or ""))
+				local detail = type(res) == "table" and (res.Body or res.body) or nil
+				warn("[SAIKI RECHAT] Smoke sync request failed: " .. tostring(method) .. " " .. tostring(code) .. (detail and (" " .. tostring(detail):sub(1, 160)) or ""))
 			end
 			return false
 		end
-		local data
 		local raw = res.Body or res.body or ""
-		if raw ~= "" then pcall(function() data = HttpService:JSONDecode(raw) end) end
-		return true, data
+		if raw == "" then return true, nil end
+		local decoded
+		local decodedOk = pcall(function() decoded = HttpService:JSONDecode(raw) end)
+		return true, decodedOk and decoded or nil
 	end
-	local mine = "smk_" .. enc(JOB) .. "/" .. ME
+
+	local serverPath = "smk_" .. enc(JOB)
+	local mine = serverPath .. "/" .. ME
 	HOST.Net = {
-		-- pace = "Chill" | "Normal" | "Chain", or nil to turn my smoke off
 		setSmoke = function(pace)
 			task.spawn(function()
 				if pace and OK[pace] then
+					-- Refresh the server-side timestamp whenever the smoke state changes.
 					call("PUT", mine, { p = pace, t = { [".sv"] = "timestamp" } })
 				else
 					call("DELETE", mine)
 				end
 			end)
 		end,
-		-- returns { [userId] = pace } for everyone currently smoking in this server, or nil if the request failed
+
 		getSmokers = function()
-			local ok, data = call("GET", "smk_" .. enc(JOB))
+			local ok, data = call("GET", serverPath)
 			if not ok then return nil end
 			local out = {}
-			if type(data) == "table" then
-				local maxT = 0
-				for _, e in pairs(data) do
-					if type(e) == "table" then maxT = math.max(maxT, tonumber(e.t) or 0) end
-				end
-				for id, e in pairs(data) do
-					local uid = tonumber(id)
-					if uid and type(e) == "table" and OK[e.p] and maxT - (tonumber(e.t) or 0) <= 100000 then
-						out[uid] = e.p
+			if type(data) ~= "table" then return out end
+
+			-- Firebase server timestamps are milliseconds. Expire abandoned records
+			-- against the current time, rather than comparing each record to the
+			-- newest record (which incorrectly kept old records alive).
+			local nowMs = DateTime.now().UnixTimestampMillis
+			for id, entry in pairs(data) do
+				local uid = tonumber(id)
+				if uid and uid > 0 and type(entry) == "table" and OK[entry.p] then
+					local stamp = tonumber(entry.t)
+					if stamp and stamp <= nowMs + 30000 and nowMs - stamp <= 90000 then
+						out[uid] = entry.p
 					end
 				end
 			end
@@ -9693,10 +9706,10 @@ HOST.Run("Trolls", function()
 				while isLive() do
 					local t = tick() - t0
 					if t >= dur then break end
-					em.Rate = 4 + 42 * (1 - t / dur) ^ 0.8
+					pcall(function() em.Rate = 4 + 42 * (1 - t / dur) ^ 0.8 end)
 					RunService.Heartbeat:Wait()
 				end
-				em.Rate = 0
+				pcall(function() em.Rate = 0 end)
 				if not isLive() then break end
 				local rest = P.rest[1] + math.random() * (P.rest[2] - P.rest[1])
 				status(string.format("Resting (%ds)", math.ceil(rest)))
@@ -9727,43 +9740,63 @@ HOST.Run("Trolls", function()
 		end)
 	end
 
-	-- other players' smoke (only players running this script in the same server)
+	-- Other Saiki users' smoke. This is rendered locally on every observing client.
 	local remoteSmoke = {}
 	local function dropRemote(uid)
 		local r = remoteSmoke[uid]
-		if r then
-			r.dead = true
-			pcall(function() r.attach:Destroy() end)
-			remoteSmoke[uid] = nil
-		end
+		if not r then return end
+		r.dead = true
+		pcall(function()
+			if r.attach then r.attach:Destroy() end
+		end)
+		remoteSmoke[uid] = nil
 	end
+
+	local function getRemoteHead(player)
+		local character = player and player.Character
+		if not character then return nil end
+		return character:FindFirstChild("Head")
+	end
+
 	task.spawn(function()
-		while HOST.Gui.Parent do
-			local Net = HOST.Net
-			if Net and Net.getSmokers then
-				local ok, list = pcall(Net.getSmokers)
-				if ok and list then
-					for uid, pace in pairs(list) do
-						local pl = Players:GetPlayerByUserId(uid)
-						if pl and pl ~= LP then
-							local head = pl.Character and pl.Character:FindFirstChild("Head")
+		while HOST.Gui and HOST.Gui.Parent do
+			local net = HOST.Net
+			if net and type(net.getSmokers) == "function" then
+				local ok, list = pcall(net.getSmokers)
+				if ok and type(list) == "table" then
+					local seen = {}
+					for rawUid, pace in pairs(list) do
+						local uid = tonumber(rawUid)
+						local player = uid and Players:GetPlayerByUserId(uid)
+						if uid and player and player ~= LP and PACES[pace] then
+							seen[uid] = true
+							local head = getRemoteHead(player)
 							local r = remoteSmoke[uid]
-							if r and (not r.attach.Parent or r.attach.Parent ~= head) then dropRemote(uid) r = nil end
-							if head and not r then
-								local attach, em = makeSmoke(head, "SaikiSmokeR")
-								r = { attach = attach, pace = pace }
-								remoteSmoke[uid] = r
-								smokeLoop(attach, em, function() return r.pace end, function() return not r.dead end)
+							if r and (not r.attach or not r.attach.Parent or r.attach.Parent ~= head) then
+								dropRemote(uid)
+								r = nil
 							end
-							if r then r.pace = pace end -- follows whatever mode they switch to
+							if head and not r then
+								local attach, emitter = makeSmoke(head, "SaikiSmokeR")
+								r = { attach = attach, pace = pace, dead = false }
+								remoteSmoke[uid] = r
+								smokeLoop(attach, emitter, function()
+										return r.pace
+									end, function()
+										return not r.dead and attach.Parent ~= nil
+									end)
+							end
+							if r then r.pace = pace end
 						end
 					end
 					for uid in pairs(remoteSmoke) do
-						if not list[uid] or not Players:GetPlayerByUserId(uid) then dropRemote(uid) end
+						if not seen[uid] or not Players:GetPlayerByUserId(uid) then
+							dropRemote(uid)
+						end
 					end
 				end
 			end
-			task.wait(3)
+			task.wait(2)
 		end
 		for uid in pairs(remoteSmoke) do dropRemote(uid) end
 	end)
