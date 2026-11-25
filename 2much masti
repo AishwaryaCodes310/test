@@ -971,9 +971,9 @@ end)
 local Toggle = Instance.new("TextButton")
 Toggle.Name = "SaikiToggle"
 Toggle:SetAttribute("HostTheme", true)
-Toggle.Size = UDim2.fromOffset(142, 38)
+Toggle.Size = UDim2.fromOffset(176, 46)
 Toggle.AnchorPoint = Vector2.new(0.5, 0)
-Toggle.Position = UDim2.new(0.5, 0, 0, 16)
+Toggle.Position = UDim2.new(0.5, 0, 0, 14)
 Toggle.BackgroundColor3 = SAIKIUI.ink
 Toggle.BackgroundTransparency = 0.08
 Toggle.BorderSizePixel = 0
@@ -986,13 +986,15 @@ local ts = Instance.new("UIStroke", Toggle)
 ts.Color = Color3.new(1, 1, 1)
 ts.Transparency = 0.86
 ts.Thickness = 1
+-- chevron on the right: shows which way the sheet will go (hide = up, show = down)
 local tri = Instance.new("TextLabel")
 tri:SetAttribute("HostTheme", true)
 tri.BackgroundTransparency = 1
-tri.Position = UDim2.fromOffset(18, 0)
-tri.Size = UDim2.fromOffset(20, 38)
+tri.AnchorPoint = Vector2.new(1, 0.5)
+tri.Position = UDim2.new(1, -16, 0.5, 0)
+tri.Size = UDim2.fromOffset(16, 16)
 tri.Text = "▲"
-tri.TextSize = 15
+tri.TextSize = 12
 tri.TextColor3 = SAIKIUI.red
 tri.Font = Enum.Font.GothamBold
 tri.ZIndex = 501
@@ -1000,15 +1002,103 @@ tri.Parent = Toggle
 local triName = Instance.new("TextLabel")
 triName:SetAttribute("HostTheme", true)
 triName.BackgroundTransparency = 1
-triName.Position = UDim2.fromOffset(44, 0)
-triName.Size = UDim2.new(1, -52, 1, 0)
+triName.Position = UDim2.fromOffset(54, 6)
+triName.Size = UDim2.new(1, -86, 0, 18)
 triName.Text = "Saiki"
-triName.TextSize = 14
+triName.TextSize = 15
 triName.TextColor3 = SAIKIUI.text
 triName.TextXAlignment = Enum.TextXAlignment.Left
 triName.ZIndex = 501
 styleText(triName, true)
 triName.Parent = Toggle
+do
+    -- small caption under the name: says what a tap does
+    local sub = Instance.new("TextLabel")
+    sub.BackgroundTransparency = 1
+    sub.Position = UDim2.fromOffset(54, 24)
+    sub.Size = UDim2.new(1, -86, 0, 14)
+    sub.Text = "Tap to hide"
+    sub.TextSize = 10
+    sub.TextColor3 = SAIKIUI.mut
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.ZIndex = 501
+    styleText(sub, false)
+    sub.Parent = Toggle
+    HOST.ToggleSub = sub
+
+    -- round profile picture with a slowly turning ring
+    local av = Instance.new("Frame")
+    av.Name = "SaikiAvatar"
+    av.Position = UDim2.fromOffset(5, 5)
+    av.Size = UDim2.fromOffset(36, 36)
+    av.BackgroundColor3 = Color3.fromRGB(40, 44, 60)
+    av.BorderSizePixel = 0
+    av.ZIndex = 501
+    av.Parent = Toggle
+    Instance.new("UICorner", av).CornerRadius = UDim.new(1, 0)
+    local ring = Instance.new("UIStroke", av)
+    ring.Thickness = 2
+    ring.Color = Color3.new(1, 1, 1)
+    ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local ringG = Instance.new("UIGradient", ring)
+    ringG.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, SAIKIUI.red), ColorSequenceKeypoint.new(0.5, SAIKIUI.text), ColorSequenceKeypoint.new(1, SAIKIUI.red),
+    })
+    HOST.ToggleRing = ringG
+
+    local letter = Instance.new("TextLabel") -- shows until the picture has downloaded
+    letter.BackgroundTransparency = 1
+    letter.Size = UDim2.fromScale(1, 1)
+    letter.Text = "S"
+    letter.TextSize = 18
+    letter.TextColor3 = Color3.new(1, 1, 1)
+    letter.Font = Enum.Font.GothamBlack
+    letter.ZIndex = 502
+    letter.Parent = av
+    local img = Instance.new("ImageLabel")
+    img.BackgroundTransparency = 1
+    img.Size = UDim2.fromScale(1, 1)
+    img.ScaleType = Enum.ScaleType.Crop
+    img.ImageTransparency = 1
+    img.ZIndex = 503
+    img.Parent = av
+    Instance.new("UICorner", img).CornerRadius = UDim.new(1, 0)
+
+    task.spawn(function()
+        local REQ = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
+        if not (writefile and isfile and getcustomasset) then return end
+        local PATH = "saiki_toggle_pfp.jpg"
+        if not isfile(PATH) then
+            if not REQ then return end
+            local URL = "https://raw.githubusercontent.com/thedevilondiscord/Kabir-Instagram-Spammer-Extention/main/Saiki%20drawing%20%F0%9F%98%8B.jpg"
+            for _ = 1, 3 do
+                local okR, res = pcall(REQ, { Url = URL, Method = "GET" })
+                local body = okR and type(res) == "table" and (res.Body or res.body)
+                if type(body) == "string" and #body > 1000 and body:sub(1, 2) == "\255\216" then
+                    pcall(writefile, PATH, body)
+                    break
+                end
+                task.wait(4)
+            end
+        end
+        if isfile(PATH) then
+            local okA, asset = pcall(getcustomasset, PATH)
+            if okA and asset and img.Parent then
+                img.Image = asset
+                img.ImageTransparency = 0
+                letter.Visible = false
+            end
+        end
+    end)
+
+    local ringAng = 0
+    local conn
+    conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
+        if not ring.Parent then conn:Disconnect() return end
+        ringAng = (ringAng + dt * 70) % 360
+        ringG.Rotation = ringAng
+    end)
+end
 
 
 ----------------------------------------------------------------
@@ -1191,6 +1281,14 @@ function HOST.SetTheme(th, instant)
     put(Toggle:FindFirstChildOfClass("UIStroke"), { Color = Th.rim })
     put(tri, { TextColor3 = Th.tri })
     put(triName, { TextColor3 = Th.text })
+    if HOST.ToggleRing then
+        pcall(function()
+            HOST.ToggleRing.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Th.tri), ColorSequenceKeypoint.new(0.5, Th.text), ColorSequenceKeypoint.new(1, Th.tri),
+            })
+        end)
+    end
+    if HOST.ToggleSub then put(HOST.ToggleSub, { TextColor3 = Th.mut }) end
     put(Scroll, { ScrollBarImageColor3 = Th.accA })
     if HOST.Dim then put(HOST.Dim, { BackgroundColor3 = Th.dim }) end
     dockOn = {}
@@ -1908,6 +2006,8 @@ local visible = true
 local hiddenByToggle = {}
 function HOST.SetVisible(v)
     visible = v
+    tri.Text = v and "▲" or "▼"
+    if HOST.ToggleSub then HOST.ToggleSub.Text = v and "Tap to hide" or "Tap to show" end
     if v then FX.popIn() Env.apply() else FX.popOut() Env.restore() end
     if not v then
         table.clear(hiddenByToggle)
