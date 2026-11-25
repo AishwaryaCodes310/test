@@ -5732,7 +5732,8 @@ end)()
 ;(function()
 	local HB = {
 		ENABLED = true,
-		SHOW_SELF = false,      -- true = also draw it over your own head
+		SHOW_SELF = true,       -- true = also draw it over your own head (banner + your own chat bubbles)
+		SELF_ALWAYS = true,     -- your own banner ignores the NEAR/FAR distance fade (your camera is always close); hidden only in first person
 		TEXT = "Simple Rechat", -- banner text
 		NEAR = 20,              -- studs: closer than this = banner fully gone
 		FAR = 36,               -- studs: farther than this = banner fully shown
@@ -6047,6 +6048,7 @@ end)()
 			if head and head.Parent then
 				local dist = (head.Position - cam.CFrame.Position).Magnitude
 				local goal = math.clamp((HB.FAR - dist) / (HB.FAR - HB.NEAR), 0, 1)
+				if uid == LP.UserId and HB.SELF_ALWAYS then goal = 1 - math.clamp((dist - 1.5) / 1.5, 0, 1) end -- own banner: always on unless the camera is inside the head (first person)
 				t.mix += (goal - t.mix) * alpha
 				t.csg.Rotation = (now * 70) % 360
 				t.btg.Rotation = t.csg.Rotation
