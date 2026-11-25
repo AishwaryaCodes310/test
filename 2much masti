@@ -687,13 +687,22 @@ local pageSub = Instance.new("TextLabel")
 pageSub.Name = "PageSub"
 pageSub.BackgroundTransparency = 1
 pageSub.Position = UDim2.fromOffset(35, 56)
-pageSub.Size = UDim2.fromOffset(420, 16)
-pageSub.Text = SECTIONS[1].sub
-pageSub.TextSize = 11
-pageSub.TextColor3 = SAIKIUI.mut
+pageSub.Size = UDim2.fromOffset(560, 18)
+do -- exclusive tagline instead of the tab description (one random line per load)
+    local TAGLINES = {
+        "You're on the most advanced elite chat. Only a few hand-picked users have access.",
+        "Elite access: a limited, invite-only chat that very few people can use.",
+        "The most advanced chat around, and you're one of the select few let in.",
+        "Limited users. Permitted List only. You're part of an exclusive circle.",
+    }
+    pageSub.Text = TAGLINES[math.random(1, #TAGLINES)]
+end
+pageSub.TextSize = 13
+pageSub.TextColor3 = SAIKIUI.text
 pageSub.TextXAlignment = Enum.TextXAlignment.Left
+pageSub.TextTruncate = Enum.TextTruncate.AtEnd
 pageSub.ZIndex = 50
-styleText(pageSub, false)
+styleText(pageSub, true)
 pageSub.Parent = HOST.Sheet
 
 ----------------------------------------------------------------
@@ -724,8 +733,7 @@ local GAP_X, GAP_Y, PAD_X, DESIGN_H = 14, 12, 26, 372
 local curSection = 0
 
 local function paintSection(i)
-    -- the big title is the greeting now; only the small line under it follows the tab
-    pageSub.Text = SECTIONS[i].sub
+    -- the title is the greeting and the line under it is the exclusive tagline: neither follows the tab any more
 end
 
 local function updateSection()
@@ -782,6 +790,7 @@ function HOST.Relayout()
     if HOST.PlaceFlag then pcall(HOST.PlaceFlag, compact) else pageTitle.Position = UDim2.fromOffset(34, compact and 8 or 26) end
     pageTitle.TextSize = compact and 20 or 24
     pageSub.Position = UDim2.fromOffset(35, compact and 34 or 56)
+    pageSub.TextSize = compact and 11 or 13
     Scroll.Position = UDim2.fromOffset(0, topH)
     Scroll.Size = UDim2.new(1, 0, 1, -(topH + botH))
     if HOST.LayoutDock then pcall(HOST.LayoutDock, compact, dockH) end
